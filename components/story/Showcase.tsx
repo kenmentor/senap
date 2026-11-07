@@ -40,8 +40,13 @@ export default function Showcase() {
       if (!el) return;
       const rect = el.getBoundingClientRect();
       const vhNow = window.innerHeight;
-      const e = Math.min(1, Math.max(0, (vhNow - rect.top) / vhNow));
-      setP(Math.round(e * 1000) / 1000);
+      // 0 when the row is a half-screen below center, 1 when a half-screen above.
+      // The animation plays through while the row is actually visible.
+      const e = 0.5 + (vhNow / 2 - (rect.top + rect.height / 2)) / vhNow;
+      setP(Math.round(Math.min(1, Math.max(0, e)) * 1000) / 1000);
+      // Fade the whole row out as its bottom edge leaves through the top.
+      const exit = (rect.bottom - vhNow * 0.1) / (vhNow * 0.6);
+      setOut(Math.round(Math.min(1, Math.max(0, exit)) * 1000) / 1000);
     };
     const onScroll = () => {
       if (!raf) raf = requestAnimationFrame(update);
@@ -78,9 +83,11 @@ export default function Showcase() {
   const pitch = w * 0.48 + 110 * spread;
   const inset = w - pitch;
   const tilt = 4 + 12 * spread;
+  // Fan exit: 1 while the row is in view, →0 as it scrolls past the top.
+  const [out, setOut] = useState(1);
 
   return (
-    <div ref={wrapRef} className="flex w-full flex-col items-center justify-center py-16">
+    <div ref={wrapRef} className="flex w-full flex-col items-center justify-center py-16" style={{ paddingBottom: 150 }}>
       <div className="flex gap-2 rounded-full p-1.5" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(134,150,160,0.2)" }}>
         {TABS.map((t) => (
           <button
@@ -96,7 +103,7 @@ export default function Showcase() {
           </button>
         ))}
       </div>
-      <div className="mt-6 flex w-full items-end justify-center" style={{ gap: 0 }}>
+      <div className="mt-6 flex w-full items-end justify-center" style={{ gap: 0, opacity: out, pointerEvents: out < 0.5 ? "none" : "auto" }}>
         {ordered.map((ph, i) => {
           const isCenter = ph.id === tab;
           const x = i === 0 ? inset : i === 2 ? -inset : 0;
@@ -108,10 +115,10 @@ export default function Showcase() {
               animate={{
                 opacity: 1,
                 x,
-                y: isCenter ? -30 : 10,
+                y: isCenter ? -30 + p * 150 : 10 - p * 30,
                 rotate
               }}
-              transition={{ type: "spring", stiffness: 180, damping: 28, mass: 0.9 }}
+              transition={{ type: "spring", stiffness: 260, damping: 34, mass: 0.9 }}
               className="flex shrink-0 flex-col items-center"
               style={{ zIndex: isCenter ? 3 : 1, transformOrigin: "bottom center", width: w }}
             >

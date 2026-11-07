@@ -1,7 +1,7 @@
 "use client";
 
 export default function ChatWallpaper({
-  opacity = 0.35,
+  opacity = 0.05,
   image
 }: {
   opacity?: number;

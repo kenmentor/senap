@@ -42,7 +42,7 @@ function IntroBlock({ bg, eyebrow, title, accent, extra }: { bg: string; eyebrow
   }, []);
 
   return (
-    <section ref={ref} className="flex min-h-[100svh] w-full flex-col items-center justify-center overflow-hidden px-6 text-center" style={{ background: bg }}>
+    <section ref={ref} className="flex min-h-[100svh] w-full flex-col items-center justify-center px-6 text-center" style={{ background: bg, overflow: "visible" }}>
       <div
         style={{
           opacity: t,
