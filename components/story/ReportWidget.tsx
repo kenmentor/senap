@@ -33,7 +33,7 @@ export default function ReportWidget({
       </div>
       <p className="mt-3 font-semibold">SALES REPORT READY</p>
       <p className="mt-1 rounded-lg px-3 py-2 text-xs font-semibold" style={{ background: "rgba(232,181,91,0.12)", color: "var(--warning)" }}>
-        SHARE WITH MR CHI? — contains customer summary. Approval required.
+        SHARE WITH MR CHI? Contains customer summary. Approval required.
       </p>
       <div className="mt-2 flex gap-2">
         <button

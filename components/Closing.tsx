@@ -8,8 +8,8 @@ export default function Closing() {
           {["Starter", "Business", "Professional"].map((p, i) => (
             <div key={p} className="panel rounded-2xl p-5">
               <p className="font-semibold">{p}</p>
-              <p className="font-display mt-2 text-3xl font-bold">{i === 0 ? "—" : i === 1 ? "—" : "—"}</p>
-              <p className="mt-1 text-sm text-[var(--text-2)]">Placeholder — pricing to be configured. WhatsApp platform fees separate.</p>
+              <p className="font-display mt-2 text-3xl font-bold">TBD</p>
+              <p className="mt-1 text-sm text-[var(--text-2)]">Placeholder. Pricing to be configured. WhatsApp platform fees separate.</p>
             </div>
           ))}
         </div>

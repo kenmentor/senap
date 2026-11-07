@@ -22,7 +22,7 @@ export default function ExactGroupScreen({ src }: { src: string }) {
   return (
     <div ref={wrapRef} className="w-full overflow-hidden" style={{ background: "#000", borderRadius: 36, height: H * scale }}>
       <iframe
-        title="WhatsApp 2026 — exact group screen"
+        title="WhatsApp 2026, exact group screen"
         src={src}
         scrolling="no"
         style={{

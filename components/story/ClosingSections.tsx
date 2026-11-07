@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import { MockFrame } from "react-mockframe";
-import { motion } from "motion/react";
 import ExactGroupScreen from "./ExactGroupScreen";
 
 const PANELS = [
@@ -10,13 +9,13 @@ const PANELS = [
     src: "/phones/updates-2026.html",
     eyebrow: "Customer care",
     title: "Every conversation, handled.",
-    body: "Status, chats, groups — Amaka lives where your customers already are."
+    body: "Status, chats, groups. Amaka lives where your customers already are."
   },
   {
     src: "/phones/chat-2026.html",
     eyebrow: "Marketing · Inventory · Reports",
     title: "One employee. Whole shop.",
-    body: "Products, promos, polls and support — one screen, zero switching."
+    body: "Products, promos, polls and support. One screen, zero switching."
   },
   {
     src: "/phones/group-2026.html",
@@ -26,6 +25,47 @@ const PANELS = [
     cta: true
   }
 ] as const;
+
+const PHONE_W = 230;
+const PHONE_H = PHONE_W * 2.09;
+const N = PANELS.length;
+
+function PhoneStack({ progress }: { progress: number }) {
+  return (
+    <div style={{ position: "relative", width: PHONE_W, height: PHONE_H }}>
+      {PANELS.map((s, i) => {
+        // Each screen is centered on its section; neighboring screens
+        // dissolve + slide through each other as the phone travels.
+        const center = i + 0.5;
+        const d = Math.abs(progress - center);
+        const opacity = Math.max(0, 1 - d * 1.5);
+        const scale = 1 - Math.min(1, d) * 0.06;
+        const y = (progress - center) * -46;
+        return (
+          <div
+            key={s.src}
+            style={{
+              position: "absolute",
+              inset: 0,
+              opacity,
+              transform: `translateY(${y}px) scale(${scale})`,
+              pointerEvents: opacity > 0.5 ? "auto" : "none",
+              willChange: "transform, opacity"
+            }}
+          >
+            <div style={{ width: PHONE_W, height: PHONE_H, overflow: "hidden" }}>
+              <div style={{ width: 385, transform: "scale(0.5974)", transformOrigin: "top left" }}>
+                <MockFrame device="Galaxy S25" color="blue-black">
+                  <ExactGroupScreen src={s.src} />
+                </MockFrame>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 export default function ClosingSections() {
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -56,72 +96,94 @@ export default function ClosingSections() {
     };
   }, []);
 
-  const active = Math.min(2, Math.floor(p * 3));
-  // Physical travel: drops in from the hero phones above, docks, exits downward.
-  const vhPx = typeof window === "undefined" ? 800 : Math.max(320, window.innerHeight || 800);
-  const travelY =
-    p < 0.15 ? -vhPx * 0.7 * (1 - p / 0.15) : p > 0.85 ? vhPx * 0.7 * ((p - 0.85) / 0.15) : (0.5 - p) * 50;
+  // Continuous scroll position across the 3 sections (0 → 3).
+  const progress = Math.min(N - 0.001, Math.max(0, p * N));
+  const active = Math.min(N - 1, Math.floor(progress));
+
+  // The phone glides down 1:1 with the scroll: no steps, no snapping.
+  // Bound directly via style so it tracks the finger like a scrub.
+  const TRAVEL = 300;
+  const phoneY = -TRAVEL / 2 + p * TRAVEL;
+
+  // After the third section it keeps sinking and fades out.
+  const fadeStart = 0.86;
+  const fade = p > fadeStart ? Math.min(1, (p - fadeStart) / (1 - fadeStart)) : 0;
+  const opacity = 1 - fade;
+  const exitY = phoneY + fade * 180;
+  const scale = 1 - fade * 0.12;
 
   return (
-    <div ref={wrapRef} style={{ height: "320svh", background: "#000000" }}>
-      <div className="flex h-[100svh] w-full items-center justify-center" style={{ position: "sticky", top: 0 }}>
-        <div className="mx-auto flex w-full max-w-[1000px] flex-col items-center justify-center gap-8 px-6 md:flex-row md:gap-14">
-          <motion.div
-            className="shrink-0"
-            initial={false}
-            animate={{ x: 0, y: travelY, opacity: p < 0.22 ? 0 : 1 }}
-            transition={{ duration: 0.4, ease: "easeOut" }}
-            style={{ width: 230, pointerEvents: p < 0.22 ? "none" : "auto" }}
+    <div
+      ref={wrapRef}
+      style={{
+        background:
+          "radial-gradient(55% 42% at 28% 32%, rgba(0,168,132,0.12), transparent 70%), radial-gradient(45% 40% at 75% 75%, rgba(0,168,132,0.07), transparent 70%), #000000"
+      }}
+    >
+      <div className="mx-auto grid w-full max-w-[1000px] grid-cols-1 px-6 md:grid-cols-2 md:gap-14">
+        {/* One phone: sticky, glides down with the scroll, fades after #3 */}
+        <div className="sticky top-0 z-10 flex h-[52svh] items-center justify-center md:h-[100svh]">
+          <div
+            style={{
+              transform: `translateY(${exitY}px) scale(${scale})`,
+              opacity,
+              pointerEvents: opacity < 0.5 ? "none" : "auto",
+              willChange: "transform, opacity"
+            }}
           >
-            <div style={{ position: "relative", width: 230, height: 230 * 2.09 }}>
-              {PANELS.map((s, i) => (
-                <div
-                  key={s.src}
-                  style={{
-                    position: "absolute",
-                    inset: 0,
-                    opacity: i === active ? 1 : 0,
-                    transform: `scale(${i === active ? 1 : 0.95})`,
-                    transition: "opacity 0.45s ease, transform 0.45s ease",
-                    pointerEvents: i === active ? "auto" : "none"
-                  }}
-                >
-                  <div style={{ width: 230, height: 230 * 2.09, overflow: "hidden" }}>
-                    <div style={{ width: 385, transform: "scale(0.5974)", transformOrigin: "top left" }}>
-                      <MockFrame device="Galaxy S25" color="blue-black">
-                        <ExactGroupScreen src={s.src} />
-                      </MockFrame>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </motion.div>
-          <div className="w-full max-w-[420px] text-center md:text-left">
-            {PANELS.map((s, i) => (
-              <div key={s.src} style={{ display: i === active ? "block" : "none" }}>
-                <p className="text-sm font-bold uppercase" style={{ letterSpacing: "0.24em", color: "#00a884" }}>
-                  {s.eyebrow}
-                </p>
-                <p className="font-display mt-3 text-4xl font-extrabold md:text-5xl" style={{ color: "#e9edef" }}>
-                  {s.title}
-                </p>
-                <p className="mt-3 text-lg" style={{ color: "var(--text-2)" }}>
-                  {s.body}
-                </p>
-                {"cta" in s && s.cta && (
-                  <a href="#story" className="mt-6 inline-block rounded-full px-7 py-3 text-base font-bold" style={{ background: "#00a884", color: "#04241d" }}>
-                    Get your employee
-                  </a>
-                )}
-              </div>
-            ))}
-            <div className="mt-6 flex justify-center gap-2 md:justify-start">
-              {PANELS.map((s, i) => (
-                <span key={s.src} className="h-1.5 rounded-full" style={{ width: i === active ? 28 : 8, background: i === active ? "#00a884" : "rgba(134,150,160,0.3)", transition: "all 0.3s" }} />
-              ))}
-            </div>
+            <PhoneStack progress={progress} />
           </div>
+        </div>
+
+        {/* 3 consecutive sections */}
+        <div>
+          {PANELS.map((s, i) => {
+            // Text brightens as its section reaches viewport center,
+            // dims as it leaves, same continuous curve as the phone.
+            const center = (i + 0.5) / N;
+            const dist = Math.abs(p - center);
+            const tOpacity = 1 - Math.min(0.7, dist * 3);
+            const tY = (p - center) * -70;
+            return (
+              <section key={s.src} className="flex min-h-[100svh] flex-col justify-center py-16">
+                <div style={{ opacity: tOpacity, transform: `translateY(${tY}px)`, willChange: "transform, opacity" }}>
+                  <p className="text-sm font-bold uppercase" style={{ letterSpacing: "0.24em", color: "#00a884" }}>
+                    {s.eyebrow} · {i + 1}/3
+                  </p>
+                  <p className="font-display mt-3 text-4xl font-extrabold md:text-5xl" style={{ color: "#e9edef" }}>
+                    {s.title}
+                  </p>
+                  <p className="mt-3 text-lg" style={{ color: "var(--text-2)" }}>
+                    {s.body}
+                  </p>
+                  {"cta" in s && s.cta && (
+                    <a
+                      href="#story"
+                      className="mt-6 inline-block rounded-full px-7 py-3 text-base font-bold"
+                      style={{ background: "#00a884", color: "#04241d" }}
+                    >
+                      Get your employee
+                    </a>
+                  )}
+                </div>
+                <div className="mt-6 flex gap-2">
+                  {PANELS.map((d, j) => (
+                    <span
+                      key={d.src}
+                      className="h-1.5 rounded-full"
+                      style={{
+                        width: j === i ? 28 : 8,
+                        background: j === i ? "#00a884" : "rgba(134,150,160,0.3)",
+                        transition: "all 0.3s"
+                      }}
+                    />
+                  ))}
+                </div>
+              </section>
+            );
+          })}
+          {/* scroll room so the phone can sink + fade after section 3 */}
+          <div className="h-[70svh]" aria-hidden />
         </div>
       </div>
     </div>
