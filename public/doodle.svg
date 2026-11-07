@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200" fill="none">
+  <!-- Exact set: 16 geometric icons on a strict 4x4 grid (50px cells) + dot row.
+       Every glyph fits inside +-14px of its cell centre so the tile repeats seamlessly. -->
+  <g stroke="#8696A0" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+    <!-- row 1, y=20 -->
+    <path d="M11 12h28a6 6 0 0 1 6 6v9a6 6 0 0 1-6 6h-8l-6 6v-6h-8a6 6 0 0 1-6-6v-9a6 6 0 0 1 6-6z"/>
+    <rect x="68" y="8" width="14" height="24" rx="3.5"/>
+    <line x1="73" y1="28" x2="77" y2="28"/>
+    <circle cx="125" cy="20" r="10"/>
+    <circle cx="121.5" cy="18" r="1.1" fill="#8696A0"/>
+    <circle cx="128.5" cy="18" r="1.1" fill="#8696A0"/>
+    <path d="M120 23.5a7 7 0 0 0 10 0"/>
+    <path d="M175 8l2.6 5.2 5.7.8-4.1 4 .9 5.7-5.1-2.7-5.1 2.7.9-5.7-4.1-4 5.7-.8z"/>
+    <!-- row 2, y=60 -->
+    <rect x="11" y="51" width="28" height="18" rx="4.5"/>
+    <circle cx="25" cy="60" r="5.5"/>
+    <rect x="69" y="48" width="12" height="20" rx="6"/>
+    <path d="M65 62a9 9 0 0 0 18 0M75 71v4"/>
+    <rect x="111" y="51" width="28" height="18" rx="4.5"/>
+    <path d="M122 56.5l6 3.5-6 3.5z"/>
+    <path d="M175 55c-3.4-3.8-9.4-2.9-9.4 1.8 0 3.4 4.2 6.3 9.4 10.2 5.2-3.9 9.4-6.8 9.4-10.2 0-4.7-6-5.6-9.4-1.8z"/>
+    <!-- row 3, y=100 -->
+    <rect x="11" y="91" width="28" height="18" rx="3.5"/>
+    <path d="M11 94.5l14 8.5 14-8.5"/>
+    <path d="M75 92a9 9 0 1 0 9 9c0 5.6-9 13.5-9 13.5s-9-7.9-9-13.5a9 9 0 0 1 9-9z"/>
+    <circle cx="75" cy="101" r="3"/>
+    <circle cx="125" cy="100" r="10"/>
+    <path d="M125 93v7l5 3.5"/>
+    <rect x="161" y="91" width="28" height="18" rx="3.5"/>
+    <circle cx="169" cy="97.5" r="1.6" fill="#8696A0"/>
+    <path d="M161 104l8-6 6 4 5-5 9 7"/>
+    <!-- row 4, y=140 -->
+    <path d="M25 130v16M25 130a4 4 0 1 0 .1 0M25 140l10-2v-10"/>
+    <path d="M63 132l24-8-10 22-6-6zM69 138l15-6"/>
+    <circle cx="125" cy="140" r="10"/>
+    <path d="M119 140h12M125 134v12"/>
+    <path d="M168 135l-6.5 6.8 6.5 6.7 1.5-1.5-5-5.2 5-5.3z"/>
+    <path d="M180 135l6.5 6.8-6.5 6.7-1.5-1.5 5-5.2-5-5.3z"/>
+    <!-- row 5: dot rhythm only -->
+    <circle cx="25" cy="180" r="1.4" fill="#8696A0"/>
+    <circle cx="33" cy="180" r="1.4" fill="#8696A0"/>
+    <circle cx="75" cy="180" r="1.4" fill="#8696A0"/>
+    <circle cx="125" cy="180" r="1.4" fill="#8696A0"/>
+    <circle cx="133" cy="180" r="1.4" fill="#8696A0"/>
+    <circle cx="175" cy="180" r="1.4" fill="#8696A0"/>
+  </g>
+</svg>

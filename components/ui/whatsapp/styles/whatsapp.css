@@ -1,0 +1,96 @@
+/* WhatsApp UI tokens (adapted for Tailwind v3 — plain CSS, no @theme). */
+
+:root {
+  --wa-green-400: #25d366;
+  --wa-emerald-400: #06cf9c;
+  --wa-emerald-500: #00a884;
+  --wa-emerald-600: #008069;
+  --wa-sky-blue-300: #53bdeb;
+  --wa-always-white: #ffffff;
+  --wa-always-black: #000000;
+
+  --wa-bg: #ffffff;
+  --wa-bg-deeper: #f0f2f5;
+  --wa-panel-bg: #ffffff;
+  --wa-panel-header-bg: #ffffff;
+  --wa-conversation-bg: #f5f0e8;
+  --wa-text-primary: #111b21;
+  --wa-text-secondary: #667781;
+  --wa-bubble-outgoing: #e7ffdb;
+  --wa-bubble-incoming: #ffffff;
+  --wa-bubble-meta: rgba(17, 27, 33, 0.45);
+  --wa-border: #e9edef;
+  --wa-primary: #008069;
+  --wa-read: #53bdeb;
+  --wa-delivered: #8696a0;
+  --wa-typing-dot: #8696a0;
+  --wa-wallpaper-bg: #f5f0e8;
+  --wa-wallpaper-image: url("/wa-bg.png"), url("/doodle.svg");
+  --wa-msg-max-width: 65%;
+  --wa-bubble-radius: 7.5px;
+}
+
+.dark {
+  --wa-bg: #111b21;
+  --wa-bg-deeper: #0b141a;
+  --wa-panel-bg: #111b21;
+  --wa-panel-header-bg: #202c33;
+  --wa-conversation-bg: #0b141a;
+  --wa-text-primary: #e9edef;
+  --wa-text-secondary: #8696a0;
+  --wa-bubble-outgoing: #005c4b;
+  --wa-bubble-incoming: #202c33;
+  --wa-bubble-meta: rgba(255, 255, 255, 0.6);
+  --wa-border: rgba(233, 237, 239, 0.12);
+  --wa-text-secondary: #8696a0;
+  --wa-icon-default: #aebac1;
+  --wa-icon-lighter: #8696a0;
+  --wa-gray-100: #eeeeee;
+  --wa-gray-300: #bdbdbd;
+  --wa-hover: rgba(233, 237, 239, 0.05);
+  --wa-panel-header-bg: #202c33;
+  --wa-primary: #00a884;
+  --wa-read: #53bdeb;
+  --wa-delivered: #aebac1;
+  --wa-wallpaper-bg: #0b141a;
+}
+
+.font-wa {
+  font-family: "Segoe UI", "Helvetica Neue", Helvetica, "Lucida Grande", Arial, sans-serif;
+}
+.bg-wa-bubble-outgoing { background-color: var(--wa-bubble-outgoing); }
+.bg-wa-bubble-incoming { background-color: var(--wa-bubble-incoming); }
+.fill-wa-bubble-outgoing { fill: var(--wa-bubble-outgoing); }
+.fill-wa-bubble-incoming { fill: var(--wa-bubble-incoming); }
+.fill-wa-always-black { fill: var(--wa-always-black); }
+.text-wa-text-primary { color: var(--wa-text-primary); }
+.text-wa-bubble-meta { color: var(--wa-bubble-meta); }
+.text-wa-delivered { color: var(--wa-delivered); }
+.text-wa-text-secondary { color: var(--wa-text-secondary); }
+.text-wa-icon-default { color: var(--wa-icon-default); }
+.text-wa-gray-100 { color: var(--wa-gray-100); }
+.bg-wa-text-secondary { background-color: var(--wa-text-secondary); }
+.bg-wa-gray-700 { background-color: #424445; }
+.bg-wa-gray-800 { background-color: #242626; }
+.text-wa-read { color: var(--wa-read); }
+.text-wa-text-critical { color: #ea0038; }
+.bg-wa-gray-300 { background-color: var(--wa-gray-300); }
+.bg-wa-panel-header-bg { background-color: var(--wa-panel-header-bg); }
+.fill-wa-gray-300 { fill: var(--wa-gray-300); }
+.h-wa-header-height { height: 59px; }
+.h-wa-avatar-sm { height: 40px; }
+.w-wa-avatar-sm { width: 40px; }
+
+.wa-wallpaper {
+  position: relative;
+  background-color: var(--wa-wallpaper-bg);
+  background-image: var(--wa-wallpaper-image);
+  background-repeat: no-repeat, repeat;
+  background-size: cover, 200px 200px;
+}
+
+@keyframes wa-typing-bounce {
+  0%, 60%, 100% { transform: translateY(0); }
+  30% { transform: translateY(-4px); }
+}
+.animate-wa-typing-bounce { animation: wa-typing-bounce 1.2s ease-in-out infinite; }
