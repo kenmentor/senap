@@ -70,6 +70,15 @@ function PhoneStack({ progress }: { progress: number }) {
 export default function ClosingSections() {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [p, setP] = useState(0);
+  const [compact, setCompact] = useState(false);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    const apply = () => setCompact(mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
 
   useEffect(() => {
     let raf = 0;
@@ -102,14 +111,16 @@ export default function ClosingSections() {
 
   // The phone glides down 1:1 with the scroll: no steps, no snapping.
   // Bound directly via style so it tracks the finger like a scrub.
-  const TRAVEL = 300;
+  // Smaller descent on mobile so the phone stays in its top slot.
+  const TRAVEL = compact ? 130 : 300;
   const phoneY = -TRAVEL / 2 + p * TRAVEL;
 
-  // After the third section it keeps sinking and fades out.
-  const fadeStart = 0.86;
+  // Only after the third section is fully past does the phone sink + fade.
+  // While any text section is on screen the phone stays fully visible.
+  const fadeStart = 0.95;
   const fade = p > fadeStart ? Math.min(1, (p - fadeStart) / (1 - fadeStart)) : 0;
   const opacity = 1 - fade;
-  const exitY = phoneY + fade * 180;
+  const exitY = phoneY + fade * 120;
   const scale = 1 - fade * 0.12;
 
   return (
@@ -121,17 +132,20 @@ export default function ClosingSections() {
       }}
     >
       <div className="mx-auto grid w-full max-w-[1000px] grid-cols-1 px-6 md:grid-cols-2 md:gap-14">
-        {/* One phone: sticky, glides down with the scroll, fades after #3 */}
-        <div className="sticky top-0 z-10 flex h-[52svh] items-center justify-center md:h-[100svh]">
-          <div
-            style={{
-              transform: `translateY(${exitY}px) scale(${scale})`,
-              opacity,
-              pointerEvents: opacity < 0.5 ? "none" : "auto",
-              willChange: "transform, opacity"
-            }}
-          >
-            <PhoneStack progress={progress} />
+        {/* One phone: sticky, glides down with the scroll, fades after #3.
+            On mobile it hugs the top with a little padding, sitting above the text. */}
+        <div className="sticky top-0 z-10 flex h-[52svh] items-start justify-center pt-4 md:h-[100svh] md:items-center md:pt-0">
+          <div className="origin-center scale-[0.62] sm:scale-[0.8] md:scale-100">
+            <div
+              style={{
+                transform: `translateY(${exitY}px) scale(${scale})`,
+                opacity,
+                pointerEvents: opacity < 0.5 ? "none" : "auto",
+                willChange: "transform, opacity"
+              }}
+            >
+              <PhoneStack progress={progress} />
+            </div>
           </div>
         </div>
 
@@ -145,7 +159,7 @@ export default function ClosingSections() {
             const tOpacity = 1 - Math.min(0.7, dist * 3);
             const tY = (p - center) * -70;
             return (
-              <section key={s.src} className="flex min-h-[100svh] flex-col justify-center py-16">
+              <section key={s.src} className="flex min-h-[100svh] flex-col justify-end pb-16 pt-8 md:justify-center md:py-16">
                 <div style={{ opacity: tOpacity, transform: `translateY(${tY}px)`, willChange: "transform, opacity" }}>
                   <p className="text-sm font-bold uppercase" style={{ letterSpacing: "0.24em", color: "#00a884" }}>
                     {s.eyebrow} · {i + 1}/3

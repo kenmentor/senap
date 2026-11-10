@@ -21,8 +21,10 @@ function DoubleCheckIcon({ className }: { className?: string }) {
   );
 }
 
-function ImageCell({ src, overlay, className, naturalSize = false, onClick }: { src: string; overlay?: React.ReactNode; className?: string; naturalSize?: boolean; onClick?: () => void }) {
+function ImageCell({ src, fallbackSrc, overlay, className, naturalSize = false, onClick }: { src: string; fallbackSrc?: string; overlay?: React.ReactNode; className?: string; naturalSize?: boolean; onClick?: () => void }) {
   const [loaded, setLoaded] = React.useState(false);
+  const [err, setErr] = React.useState(false);
+  const finalSrc = err && fallbackSrc ? fallbackSrc : src;
   return (
     <div
       className={cn("relative overflow-hidden", !loaded && "bg-wa-gray-800", onClick && "cursor-zoom-in", className)}
@@ -34,9 +36,10 @@ function ImageCell({ src, overlay, className, naturalSize = false, onClick }: { 
     >
       {!loaded && <div className={cn("animate-pulse bg-wa-gray-700", naturalSize ? "min-h-[160px] w-full" : "absolute inset-0")} />}
       <img
-        src={src}
+        src={finalSrc}
         alt=""
         onLoad={() => setLoaded(true)}
+        onError={() => setErr(true)}
         className={cn("w-full object-cover transition-opacity duration-300", naturalSize ? "block max-h-[330px]" : "h-full", loaded ? "opacity-100" : "opacity-0")}
       />
       {overlay && <div className="absolute inset-0">{overlay}</div>}
@@ -48,6 +51,7 @@ interface ImageBubbleProps extends React.HTMLAttributes<HTMLDivElement> {
   variant?: "incoming" | "outgoing";
   src?: string;
   images?: string[];
+  fallbackSrc?: string;
   caption?: string;
   timestamp?: string;
   status?: MessageStatus;
@@ -55,7 +59,7 @@ interface ImageBubbleProps extends React.HTMLAttributes<HTMLDivElement> {
 }
 
 const ImageBubble = React.forwardRef<HTMLDivElement, ImageBubbleProps>(
-  ({ className, variant = "incoming", src, images, caption, timestamp, status, showTail = false, ...props }, ref) => {
+  ({ className, variant = "incoming", src, images, fallbackSrc, caption, timestamp, status, showTail = false, ...props }, ref) => {
     const isOutgoing = variant === "outgoing";
     const items: string[] = images ?? (src ? [src] : []);
 
@@ -71,11 +75,11 @@ const ImageBubble = React.forwardRef<HTMLDivElement, ImageBubbleProps>(
           )}
           <div className="relative">
             {items.length <= 1 ? (
-              <ImageCell src={items[0]} className="w-full max-h-[330px]" naturalSize />
+              <ImageCell src={items[0]} fallbackSrc={fallbackSrc} className="w-full max-h-[330px]" naturalSize />
             ) : (
               <div className="grid grid-cols-2 gap-[2px]">
                 {items.slice(0, 4).map((s, i) => (
-                  <ImageCell key={i} src={s} className="h-[165px] w-[165px]" />
+                  <ImageCell key={i} src={s} fallbackSrc={fallbackSrc} className="h-[165px] w-[165px]" />
                 ))}
               </div>
             )}

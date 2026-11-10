@@ -20,8 +20,8 @@ export default function NextSection() {
       return;
     }
     const io = new IntersectionObserver(
-      ([entry]) => setFull(entry.intersectionRatio >= 0.85),
-      { threshold: [0, 0.5, 0.85, 1] }
+      ([entry]) => setFull(entry.intersectionRatio >= 0.25),
+      { threshold: [0, 0.25, 0.5] }
     );
     io.observe(el);
     return () => io.disconnect();

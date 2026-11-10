@@ -37,7 +37,7 @@ export default function Page() {
           <p className="text-sm font-bold uppercase" style={{ letterSpacing: "0.24em", color: "#00a884" }}>
             Ready when you are
           </p>
-          <p className="font-display mt-4 max-w-[900px] text-5xl font-extrabold md:text-7xl" style={{ color: "#e9edef" }}>
+          <p className="font-display mt-4 max-w-[900px] text-4xl font-extrabold sm:text-5xl md:text-7xl" style={{ color: "#e9edef" }}>
             Hire an assistant.
           </p>
           <p className="mt-4 max-w-[560px] text-lg" style={{ color: "var(--text-2)" }}>
@@ -45,7 +45,7 @@ export default function Page() {
           </p>
           <a
             href="#story"
-            className="mt-10 inline-flex items-center gap-3 rounded-full px-14 py-7 text-2xl font-extrabold md:px-20 md:py-8 md:text-3xl"
+            className="mt-10 inline-flex items-center gap-3 rounded-full px-10 py-5 text-xl font-extrabold sm:px-14 sm:py-7 sm:text-2xl md:px-20 md:py-8 md:text-3xl"
             style={{ background: "#00a884", color: "#04241d" }}
           >
             <MessageCircle size={30} strokeWidth={2.5} />
