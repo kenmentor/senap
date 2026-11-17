@@ -46,41 +46,50 @@ function prettyTool(name: string): string {
   return (name || "unknown").replace(/_/g, " ").replace(/\s+/g, " ").trim() || "unknown";
 }
 
-/** One queued reminder/promo: icon by kind, full text (2 lines), chat + due pills. */
+/** One queued reminder/promo: colored card by kind, full text (2 lines), chat + due pills. */
 function ScheduledRow({ job, onCancel }: { job: ScheduledJob; onCancel: (id: string) => void }) {
   const composed = job.kind === "agent";
+  const accent = composed ? "#00a884" : "#5b9cf6";
+  const ink = composed ? "#04241d" : "#0b1c33";
   const due = dueIn(job.runAt);
   const chat = (job.chat || "").split("@")[0];
   return (
-    <li className="flex items-center gap-3 rounded-2xl p-3" style={{ background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.07)" }}>
+    <li
+      className="flex items-center gap-3 rounded-2xl p-3 transition hover:brightness-125"
+      style={{
+        background: composed ? "rgba(0,168,132,0.10)" : "rgba(91,156,246,0.10)",
+        border: `1px solid ${composed ? "rgba(0,168,132,0.38)" : "rgba(91,156,246,0.38)"}`,
+        borderLeft: `3px solid ${accent}`,
+      }}
+    >
       <span
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
-        style={composed ? { background: "rgba(0,168,132,0.12)", color: "#00d19f" } : { background: "rgba(66,133,244,0.12)", color: "#7aa5f8" }}
+        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
+        style={{ background: accent, color: ink }}
         title={composed ? "She composes it fresh" : "Sends as-is"}
       >
-        {composed ? <Sparkles size={16} /> : <Send size={15} />}
+        {composed ? <Sparkles size={17} strokeWidth={2.25} /> : <Send size={16} strokeWidth={2.25} />}
       </span>
       <span className="min-w-0 flex-1">
-        <span className="line-clamp-2 block text-[13px] font-medium leading-snug" style={{ color: "#e9edef" }}>
+        <span className="line-clamp-2 block text-[13px] font-semibold leading-snug" style={{ color: "#ffffff" }}>
           {job.text || "(no text)"}
         </span>
         <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
           {chat ? (
-            <span className="max-w-[140px] truncate rounded-full px-2 py-0.5 text-[10.5px] font-semibold" style={{ background: "rgba(255,255,255,0.06)", color: "#aebac1" }}>
+            <span className="max-w-[140px] truncate rounded-full px-2 py-0.5 text-[10.5px] font-semibold" style={{ background: "rgba(255,255,255,0.10)", color: "#cfd6db" }}>
               {chat}
             </span>
           ) : null}
           {due ? (
-            <span className="rounded-full px-2 py-0.5 text-[10.5px] font-bold" style={{ background: "rgba(0,168,132,0.12)", color: "#00d19f" }}>
+            <span className="rounded-full px-2 py-0.5 text-[10.5px] font-extrabold" style={{ background: accent, color: ink }}>
               {due}
             </span>
           ) : null}
-          <span className="text-[10.5px]" style={{ color: "#636c73" }}>
+          <span className="text-[10.5px] font-medium" style={{ color: "#8a949b" }}>
             {composed ? "She composes it fresh" : "Sends as-is"}
           </span>
         </span>
       </span>
-      <button onClick={() => onCancel(job.id)} aria-label="Cancel task" title="Cancel" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition hover:bg-white/10 active:bg-white/15 sm:h-8 sm:w-8" style={{ color: "#636c73" }}>
+      <button onClick={() => onCancel(job.id)} aria-label="Cancel task" title="Cancel" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition hover:bg-white/10 active:bg-white/15 sm:h-8 sm:w-8" style={{ color: "#8a949b" }}>
         <X size={14} />
       </button>
     </li>
