@@ -2,6 +2,8 @@ import mongoose, { Schema, type Document } from "mongoose";
 
 export interface SettingsDoc extends Document {
   key: string;
+  /** Dashboard owner (User id). One settings doc per owner; key = ownerId for owner docs. */
+  ownerId: string;
   business: {
     name: string;
     owner: string;
@@ -20,6 +22,8 @@ export interface SettingsDoc extends Document {
   };
   team: { name: string; role: string; access: string }[];
   plan: "Starter" | "Growth" | "Scale";
+  /** Buyer-facing storefront slug: the public store lives at /s/<storeSlug>. */
+  storeSlug: string;
   /** Private admin line that receives reports and can command the agent. OTP-verified. */
   adminPhone: string;
   /** engineId of the linked account used to send reports + OTP codes. */
@@ -33,6 +37,7 @@ export interface SettingsDoc extends Document {
 const SettingsSchema = new Schema<SettingsDoc>(
   {
     key: { type: String, required: true, unique: true, default: "default" },
+    ownerId: { type: String, default: "", index: true },
     business: {
       name: { type: String, default: "Nala Phones" },
       owner: { type: String, default: "Business owner" },
@@ -57,6 +62,7 @@ const SettingsSchema = new Schema<SettingsDoc>(
       ]
     },
     plan: { type: String, enum: ["Starter", "Growth", "Scale"], default: "Growth" },
+    storeSlug: { type: String, default: "", trim: true },
     adminPhone: { type: String, default: "", trim: true },
     reportAccountId: { type: String, default: "", trim: true },
     adminVerified: { type: Boolean, default: false },

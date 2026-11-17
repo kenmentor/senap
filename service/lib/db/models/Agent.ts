@@ -2,6 +2,8 @@ import mongoose, { Schema, type Document } from "mongoose";
 
 export interface AgentDoc extends Document {
   key: string;
+  /** Dashboard owner — per-line keys inherit their line's owner; per-owner defaults use key `default:<ownerId>`. */
+  ownerId: string;
   empId: string;
   activeEmp: string;
   name: string;
@@ -24,6 +26,7 @@ export interface AgentDoc extends Document {
 const AgentSchema = new Schema<AgentDoc>(
   {
     key: { type: String, required: true, unique: true, default: "default" },
+    ownerId: { type: String, default: "", index: true },
     empId: { type: String, default: "amaka" },
     activeEmp: { type: String, default: "amaka" },
     name: { type: String, default: "Amaka" },

@@ -4,6 +4,8 @@ export type ProductStatus = "Available" | "Low" | "Out";
 export type ProductCondition = "New" | "UK Used" | "Used";
 
 export interface ProductDoc extends Document {
+  /** Dashboard owner (User id). Empty = legacy pre-multi-user doc. */
+  ownerId: string;
   name: string;
   sku: string;
   quantity: number;
@@ -21,6 +23,7 @@ export interface ProductDoc extends Document {
 
 const ProductSchema = new Schema<ProductDoc>(
   {
+    ownerId: { type: String, default: "", index: true },
     name: { type: String, required: true, trim: true },
     sku: { type: String, required: true, trim: true },
     quantity: { type: Number, required: true, default: 0, min: 0 },

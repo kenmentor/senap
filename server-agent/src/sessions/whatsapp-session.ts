@@ -545,7 +545,7 @@ export class WhatsappSession {
       const { loadPersona, loadBusiness } = await import("./agent-tools/store.js");
       const [persona, business] = await Promise.all([
         loadPersona(this.userId).catch(() => null),
-        loadBusiness().catch(() => null),
+        loadBusiness(this.userId).catch(() => null),
       ]);
       for (const n of [managed?.name, persona?.name, (business?.name ?? "").split(/\s+/)[0]]) {
         const t = (n ?? "").trim().toLowerCase();
@@ -1721,7 +1721,7 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
     if (!selfChat) {
       try {
         const { isOwnerJid, loadBusiness } = await import("./agent-tools/store.js");
-        const b = await loadBusiness().catch(() => null);
+        const b = await loadBusiness(this.userId).catch(() => null);
         if (b?.phone && isOwnerJid(remoteJid, b.phone)) selfChat = true;
       } catch {
         /* mapping already failed — gate below stays fail-closed except self */
@@ -1777,9 +1777,9 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
 
     if (isOptOut && kind === "text") {
       try {
-        const { isOwnerJid, loadBusiness } = await import("./agent-tools/store.js");
-        const b = await loadBusiness().catch(() => null);
-        const senderIsOwner =
+          const { isOwnerJid, loadBusiness } = await import("./agent-tools/store.js");
+          const b = await loadBusiness(this.userId).catch(() => null);
+          const senderIsOwner =
           selfChat ||
           isOwnerJid(remoteJid, b?.phone) ||
           (b?.adminVerified === true && !!b?.adminPhone ? isOwnerJid(remoteJid, b.adminPhone) : false);

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Home, QrCode, UserRound, Users, Package, Blocks, Settings, PanelLeftClose, PanelLeftOpen, LogOut } from "lucide-react";
+import { Home, QrCode, UserRound, Users, Package, Store, Blocks, Settings, PanelLeftClose, PanelLeftOpen, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const items = [
@@ -12,6 +12,7 @@ const items = [
   { href: "/dashboard/agent", label: "Agent", icon: UserRound, exact: false },
   { href: "/dashboard/groups", label: "Groups", icon: Users, exact: false },
   { href: "/dashboard/products", label: "Products", icon: Package, exact: false },
+  { href: "/dashboard/store", label: "Store", icon: Store, exact: false },
   { href: "/dashboard/plugins", label: "Plugins", icon: Blocks, exact: false },
   { href: "/dashboard/settings", label: "Settings", icon: Settings, exact: false }
 ];

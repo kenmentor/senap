@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { dbConnect } from "@/lib/db/mongoose";
 import { User } from "@/lib/db/models/User";
 import { signSession, sessionCookie } from "@/lib/auth";
+import { settleWorkspace } from "@/lib/claims";
 
 /**
  * Passwordless email entry (no verification codes — launch-speed auth).
@@ -76,6 +77,8 @@ export async function POST(req: Request) {
       user = await User.create({ name: nameFromEmail(email), email });
       isNew = true;
     }
+    // First real email adopts the pre-launch workspace; later emails start empty.
+    await settleWorkspace(String(user._id), email);
     const res = NextResponse.json({
       ok: true,
       name: user.name || "Business owner",

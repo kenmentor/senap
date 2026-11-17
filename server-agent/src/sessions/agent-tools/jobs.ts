@@ -129,7 +129,7 @@ export const jobTools: ToolDefinition[] = [
       } catch {
         /* dispatcher wakes on its own poll fallback */
       }
-      const business = await loadBusiness().catch(() => null);
+      const business = await loadBusiness(ctx.userId).catch(() => null);
       const { stamp } = nowIn(business?.timezone);
       return {
         id: String(doc._id),

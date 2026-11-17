@@ -161,7 +161,7 @@ export const campaignTools: ToolDefinition[] = [
         let price = 0;
         const pidRaw = toolArgs.asString(rec.productId).trim();
         if (pidRaw) {
-          const p = await findProductByIdOrSku(pidRaw).catch(() => null);
+          const p = await findProductByIdOrSku(pidRaw, ctx.userId).catch(() => null);
           if (!p) {
             skipped.push({ jid, why: `product "${pidRaw}" not found` });
             continue;

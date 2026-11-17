@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { dbConnect, docId } from "@/lib/db/mongoose";
 import { PluginConnection } from "@/lib/db/models/PluginConnection";
+import { sessionUser, signedOut } from "@/lib/auth-helpers";
 
 function dbError() {
   return NextResponse.json(
@@ -9,16 +10,20 @@ function dbError() {
   );
 }
 
+const SEEDS = [
+  { toolId: "gmail", account: "sales@nalaphones.com", enabled: true, grants: [], lastUsed: "12 min ago" },
+  { toolId: "sheets", account: "Nala sales log", enabled: true, grants: [], lastUsed: "1 h ago" }
+];
+
 export async function GET() {
+  const me = await sessionUser();
+  if (!me) return signedOut();
   try {
     await dbConnect();
-    let docs = await PluginConnection.find().sort({ createdAt: 1 }).lean();
+    let docs = await PluginConnection.find({ ownerId: me.id }).sort({ createdAt: 1 }).lean();
     if (docs.length === 0) {
-      await PluginConnection.insertMany([
-        { toolId: "gmail", account: "sales@nalaphones.com", enabled: true, grants: [], lastUsed: "12 min ago" },
-        { toolId: "sheets", account: "Nala sales log", enabled: true, grants: [], lastUsed: "1 h ago" }
-      ]);
-      docs = await PluginConnection.find().sort({ createdAt: 1 }).lean();
+      await PluginConnection.insertMany(SEEDS.map((s) => ({ ...s, ownerId: me.id }))).catch(() => {});
+      docs = await PluginConnection.find({ ownerId: me.id }).sort({ createdAt: 1 }).lean();
     }
     return NextResponse.json(docs.map((d) => docId(d)));
   } catch {
@@ -27,11 +32,14 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  const me = await sessionUser();
+  if (!me) return signedOut();
   try {
     await dbConnect();
     const b = await req.json();
     if (!b?.toolId) return NextResponse.json({ error: "toolId is required." }, { status: 400 });
     const doc = await PluginConnection.create({
+      ownerId: me.id,
       toolId: String(b.toolId),
       account: String(b.account || ""),
       enabled: b.enabled ?? true,

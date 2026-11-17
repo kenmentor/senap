@@ -81,7 +81,7 @@ function groupBlock(g: GroupContext): string {
 async function buildSystemPrompt(userId: string): Promise<string> {
   const [persona, business] = await Promise.all([
     loadPersona(userId).catch(() => null),
-    loadBusiness().catch(() => null),
+    loadBusiness(userId).catch(() => null),
   ]);
   const who = persona
     ? `You are ${persona.name}, ${persona.role} at ${business?.name ?? "the shop"}. Personality: ${persona.personality}.`
@@ -91,9 +91,13 @@ async function buildSystemPrompt(userId: string): Promise<string> {
   const shop = business
     ? `Shop: ${business.name}, ${business.address}. Phone: ${business.phone}. Currency: ${business.currency}. Timezone: ${business.timezone}.`
     : "";
+  const store = business
+    ? `The shop has a public buyer storefront with photos, prices and WhatsApp order buttons. When a customer asks for the full list, a catalogue, a link/website, or wants to browse everything on their own, call get_store_link and paste the URL into your reply as plain text (WhatsApp auto-previews it) — e.g. 'You fit browse everything here: URL'. Never invent the URL; photos still go through send_media first, the link is for browsing.`
+    : "";
   return [
     who,
     shop,
+    store,
     rules,
     never,
     [
@@ -247,7 +251,7 @@ export async function probeGroupIntent(input: IntentProbeInput): Promise<IntentP
 export async function handleCustomerMessage(
   req: AssistantRequest,
 ): Promise<string> {
-  const businessForGate = await loadBusiness().catch(() => null);
+  const businessForGate = await loadBusiness(req.userId).catch(() => null);
   const me = req.sock?.user as unknown as { id?: string; lid?: string; phoneNumber?: string } | null | undefined;
   const ownForms = [me?.id, me?.lid, me?.phoneNumber].filter((x): x is string => !!x);
   let selfOwner = ownForms.some((s) => isSelfJid(req.customerJid, s));

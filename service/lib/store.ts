@@ -1,0 +1,62 @@
+/**
+ * Shared storefront helpers (service side). The agent has a mirrored copy in
+ * server-agent (slugify/resolveStoreSlug/storeUrl) — keep the two in sync:
+ * same input must always produce the same /s/<slug> URL on both sides.
+ */
+
+export function slugify(name: string): string {
+  const slug = (name ?? "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-{2,}/g, "-")
+    .slice(0, 60);
+  return slug || "shop";
+}
+
+/** Clean a user-typed slug the same way everywhere. */
+export function cleanSlug(raw: string): string {
+  return slugify(raw);
+}
+
+export type StoreBusiness = {
+  name: string;
+  phone: string;
+  address: string;
+  currency: string;
+};
+
+/** The slug the storefront + agent link resolve to (explicit slug wins). */
+export function resolveStoreSlug(settings: { storeSlug?: string; business?: { name?: string } }): string {
+  const raw = (settings.storeSlug ?? "").trim();
+  if (raw) return cleanSlug(raw);
+  return slugify(settings.business?.name ?? "");
+}
+
+/** Public path of the buyer storefront. */
+export function storePath(slug: string): string {
+  return `/s/${slug}`;
+}
+
+/** "NGN ₦" -> "₦", "USD $" -> "$". Falls back to ₦. */
+export function currencySymbol(currency: string | undefined): string {
+  const parts = (currency ?? "").trim().split(/\s+/).filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1] : "₦";
+}
+
+export function formatPrice(amount: number, currency?: string): string {
+  const n = Number.isFinite(amount) ? amount : 0;
+  return `${currencySymbol(currency)}${n.toLocaleString("en-NG")}`;
+}
+
+/** Digits-only phone for wa.me links (drops +, spaces, dashes). */
+export function waDigits(phone: string | undefined): string {
+  return (phone ?? "").replace(/\D/g, "");
+}
+
+/** Prefilled "I want to order…" WhatsApp deep link for a product. */
+export function orderLink(phone: string | undefined, businessName: string, productName: string, price: string): string {
+  const text = `Hello ${businessName}, I'd like to order: ${productName} (${price})`;
+  return `https://wa.me/${waDigits(phone)}?text=${encodeURIComponent(text)}`;
+}

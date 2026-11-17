@@ -9,6 +9,7 @@ import {
   UserRound,
   Users,
   Package,
+  Store,
   Blocks,
   Settings,
   LogOut,
@@ -26,6 +27,7 @@ const tabs = [
 ];
 
 const moreItems = [
+  { href: "/dashboard/store", label: "Store", icon: Store, desc: "Buyer page, link & QR" },
   { href: "/dashboard/plugins", label: "Plugins", icon: Blocks, desc: "Status, promos & tools" },
   { href: "/dashboard/settings", label: "Settings", icon: Settings, desc: "Business, hours & access" },
 ];

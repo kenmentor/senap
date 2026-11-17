@@ -1,6 +1,8 @@
 import mongoose, { Schema, type Document } from "mongoose";
 
 export interface PluginDoc extends Document {
+  /** Dashboard owner — same toolId can be connected by many owners. */
+  ownerId: string;
   toolId: string;
   account: string;
   enabled: boolean;
@@ -10,7 +12,8 @@ export interface PluginDoc extends Document {
 
 const PluginSchema = new Schema<PluginDoc>(
   {
-    toolId: { type: String, required: true, unique: true, trim: true },
+    ownerId: { type: String, default: "", index: true },
+    toolId: { type: String, required: true, trim: true },
     account: { type: String, required: true, default: "", trim: true },
     enabled: { type: Boolean, default: true },
     grants: { type: [Boolean], default: [] },
@@ -18,6 +21,8 @@ const PluginSchema = new Schema<PluginDoc>(
   },
   { timestamps: true, versionKey: false }
 );
+
+PluginSchema.index({ ownerId: 1, toolId: 1 }, { unique: true });
 
 export const PluginConnection =
   (mongoose.models.PluginConnection as mongoose.Model<PluginDoc> | undefined) ??

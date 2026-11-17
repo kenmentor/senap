@@ -12,8 +12,8 @@ export const timeTools: ToolDefinition[] = [
       properties: {},
       additionalProperties: false,
     },
-    execute: async () => {
-      const business = await loadBusiness().catch(() => null);
+    execute: async (_args, ctx) => {
+      const business = await loadBusiness(ctx.userId).catch(() => null);
       const { stamp, weekday } = nowIn(business?.timezone);
       return {
         datetime: stamp,

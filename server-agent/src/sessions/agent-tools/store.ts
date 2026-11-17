@@ -20,6 +20,8 @@ interface ProductRow {
   condition?: string;
   costPrice?: number;
   sold?: number;
+  /** Dashboard owner. Missing/empty = legacy pre-multi-user doc. */
+  ownerId?: string;
 }
 
 const ProductView =
@@ -39,6 +41,7 @@ const ProductView =
         condition: String,
         costPrice: Number,
         sold: Number,
+        ownerId: String,
       },
       { collection: "products" },
     ),
@@ -80,6 +83,9 @@ const AgentView =
 
 interface SettingsRow {
   key: string;
+  /** Dashboard owner. Missing/empty = legacy pre-multi-user doc. */
+  ownerId?: string;
+  storeSlug?: string;
   business: {
     name: string;
     owner: string;
@@ -99,6 +105,8 @@ const SettingsView =
     new Schema<SettingsRow>(
       {
         key: String,
+        ownerId: String,
+        storeSlug: String,
         business: {
           name: String,
           owner: String,
@@ -111,6 +119,59 @@ const SettingsView =
       { collection: "settings" },
     ),
   );
+
+/** WhatsApp line → dashboard owner mapping (linkedaccounts collection). */
+const AccountView =
+  mongoose.models.ToolAccount ??
+  mongoose.model(
+    "ToolAccount",
+    new Schema(
+      { engineId: String, ownerId: String },
+      { collection: "linkedaccounts" },
+    ),
+  );
+
+const ownerCache = new Map<string, { at: number; owner: string | null }>();
+const OWNER_CACHE_TTL_MS = 60_000;
+
+/** Resolve a WhatsApp line id to its dashboard owner's id (cached 60s). */
+export async function ownerIdForLine(lineId: string): Promise<string | null> {
+  const id = (lineId ?? "").trim();
+  if (!id) return null;
+  const hit = ownerCache.get(id);
+  if (hit && Date.now() - hit.at < OWNER_CACHE_TTL_MS) return hit.owner;
+  await ensureConn();
+  const doc = (await AccountView.findOne({ engineId: id })
+    .select("ownerId")
+    .lean()
+    .catch(() => null)) as { ownerId?: unknown } | null;
+  const owner = doc?.ownerId ? String(doc.ownerId) : null;
+  ownerCache.set(id, { at: Date.now(), owner });
+  if (ownerCache.size > 500) {
+    const oldest = ownerCache.keys().next().value;
+    if (oldest !== undefined) ownerCache.delete(oldest);
+  }
+  return owner;
+}
+
+/**
+ * Resolve a scope (line engineId or dashboard owner id) to an owner id.
+ * Unknown/empty scope → null (legacy global reads, e.g. boot paths).
+ */
+export async function resolveScopeOwner(scope?: string): Promise<string | null> {
+  const s = (scope ?? "").trim();
+  if (!s) return null;
+  const owner = await ownerIdForLine(s).catch(() => null);
+  if (owner) return owner;
+  if (/^[a-f0-9]{24}$/i.test(s)) return s;
+  return null;
+}
+
+/** Owner filter that keeps working on legacy ownerless docs until claimed. */
+function ownerOrLegacy(owner: string | null): Record<string, unknown>[] {
+  if (!owner) return [];
+  return [{ $or: [{ ownerId: owner }, { ownerId: { $in: [null, ""] } }] }];
+}
 
 export interface ShopProduct {
   id: string;
@@ -148,38 +209,45 @@ export interface BusinessInfo {
   currency: string;
   timezone: string;
   address: string;
+  /** Buyer storefront slug (empty = derived from the business name). */
+  storeSlug?: string;
   /** Private admin line — only trusted for owner commands when verified. */
   adminPhone?: string;
   adminVerified?: boolean;
 }
 
-export async function findProducts(query: string, limit = 5): Promise<ShopProduct[]> {
+export async function findProducts(query: string, limit = 5, scope?: string): Promise<ShopProduct[]> {
   await ensureConn();
   const q = query.trim();
-  const filter = q
-    ? {
-        $or: [
-          { name: { $regex: q, $options: "i" } },
-          { sku: { $regex: q, $options: "i" } },
-          { category: { $regex: q, $options: "i" } },
-        ],
-      }
-    : {};
+  const owner = scope ? await resolveScopeOwner(scope).catch(() => null) : null;
+  const and: Record<string, unknown>[] = [...ownerOrLegacy(owner)];
+  if (q) {
+    and.push({
+      $or: [
+        { name: { $regex: q, $options: "i" } },
+        { sku: { $regex: q, $options: "i" } },
+        { category: { $regex: q, $options: "i" } },
+      ],
+    });
+  }
+  const filter = and.length > 0 ? { $and: and } : {};
   const docs = await ProductView.find(filter)
     .limit(Math.min(Math.max(limit, 1), 10))
     .lean();
   return docs.map((d) => toShopProduct(d));
 }
 
-export async function findProductByIdOrSku(idOrSku: string): Promise<ShopProduct | null> {
+export async function findProductByIdOrSku(idOrSku: string, scope?: string): Promise<ShopProduct | null> {
   await ensureConn();
   const q = idOrSku.trim();
+  const owner = scope ? await resolveScopeOwner(scope).catch(() => null) : null;
+  const matchesOwner = (d: ProductRow): boolean =>
+    !owner || !d.ownerId || d.ownerId === owner;
   const byId = await ProductView.findById(q).lean().catch(() => null);
-  const doc =
-    byId ??
-    (await ProductView.findOne({
-      $or: [{ sku: q }, { name: { $regex: `^${q}$`, $options: "i" } }],
-    }).lean());
+  if (byId && matchesOwner(byId)) return toShopProduct(byId);
+  const and: Record<string, unknown>[] = [...ownerOrLegacy(owner)];
+  and.push({ $or: [{ sku: q }, { name: { $regex: `^${q}$`, $options: "i" } }] });
+  const doc = await ProductView.findOne({ $and: and }).lean();
   if (!doc) return null;
   return toShopProduct(doc);
 }
@@ -193,8 +261,9 @@ function asFiniteNumber(v: unknown, fallback: number): number {
  * Bulk catalog seed (dashboard migrations, local -> cloud moves). Upserts by
  * SKU (fallback: exact name), so re-runs are safe. Returns match/insert counts.
  */
-export async function upsertProducts(items: unknown[]): Promise<{ matched: number; upserted: number }> {
+export async function upsertProducts(items: unknown[], ownerId?: string): Promise<{ matched: number; upserted: number }> {
   await ensureConn();
+  const owner = (ownerId ?? "").trim() || null;
   let matched = 0;
   let upserted = 0;
   for (const raw of items.slice(0, 200)) {
@@ -205,6 +274,8 @@ export async function upsertProducts(items: unknown[]): Promise<{ matched: numbe
     const sku = typeof r.sku === "string" ? r.sku.trim().slice(0, 60) : "";
     const set: Record<string, unknown> = { name };
     if (sku) set.sku = sku;
+    if (owner) set.ownerId = owner;
+    if (sku) set.sku = sku;
     if (typeof r.quantity !== "undefined") set.quantity = Math.max(0, Math.round(asFiniteNumber(r.quantity, 0)));
     if (typeof r.unitPrice !== "undefined") set.unitPrice = Math.max(0, asFiniteNumber(r.unitPrice, 0));
     if (typeof r.costPrice !== "undefined") set.costPrice = Math.max(0, asFiniteNumber(r.costPrice, 0));
@@ -212,7 +283,9 @@ export async function upsertProducts(items: unknown[]): Promise<{ matched: numbe
     for (const k of ["category", "status", "description", "image", "condition"] as const) {
       if (typeof r[k] === "string" && (r[k] as string).trim()) set[k] = (r[k] as string).trim().slice(0, 1000);
     }
-    const filter = sku ? { sku } : { name };
+    // Global SKU/name match (stable across the claim migration), then stamp
+    // the owner so the doc lands in their workspace, never someone else's.
+    const filter: Record<string, unknown> = sku ? { sku } : { name };
     const res = await ProductView.updateOne(filter, { $set: set }, { upsert: true });
     matched += res.matchedCount ?? 0;
     upserted += res.upsertedCount ?? 0;
@@ -268,11 +341,16 @@ function toShopProduct(d: ProductRow): ShopProduct {
 
 export async function loadPersona(userId?: string): Promise<AssistantPersona | null> {
   await ensureConn();
-  // Per-number assignment: an account-specific persona (key = engine/user id)
-  // wins; the shared "default" persona is the fallback.
+  // Per-number assignment: an account-specific persona (key = engine id)
+  // wins; the owner's namespaced default is next; the legacy shared "default"
+  // persona is the last resort.
   let doc = null;
   if (userId?.trim()) {
     doc = await AgentView.findOne({ key: userId.trim() }).lean();
+    if (!doc) {
+      const owner = await ownerIdForLine(userId.trim()).catch(() => null);
+      if (owner) doc = await AgentView.findOne({ key: `default:${owner}` }).lean();
+    }
   }
   doc ??= await AgentView.findOne({ key: "default" }).lean();
   if (!doc) return null;
@@ -289,15 +367,49 @@ export async function loadPersona(userId?: string): Promise<AssistantPersona | n
   };
 }
 
-export async function loadBusiness(): Promise<BusinessInfo | null> {
+export async function loadBusiness(scope?: string): Promise<BusinessInfo | null> {
   await ensureConn();
-  const doc = await SettingsView.findOne({ key: "default" }).lean();
+  const owner = scope ? await resolveScopeOwner(scope).catch(() => null) : null;
+  let doc = null;
+  if (owner) doc = await SettingsView.findOne({ ownerId: owner }).lean();
+  // Legacy single-shop doc (pre-multi-user) until it is claimed.
+  doc ??= await SettingsView.findOne({ key: "default" }).lean();
   if (!doc?.business) return null;
   return {
     ...doc.business,
+    storeSlug: doc.storeSlug ?? "",
     adminPhone: doc.adminPhone ?? undefined,
     adminVerified: doc.adminVerified ?? false,
   };
+}
+
+/** "Nala Phones!" -> "nala-phones". Mirrors service lib/store.ts. */
+export function slugify(name: string): string {
+  return (
+    (name ?? "")
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .replace(/-{2,}/g, "-")
+      .slice(0, 60) || "shop"
+  );
+}
+
+export function resolveStoreSlug(businessName?: string, explicit?: string): string {
+  const raw = (explicit ?? "").trim();
+  if (raw) {
+    const clean = slugify(raw);
+    if (clean) return clean;
+  }
+  return slugify(businessName ?? "");
+}
+
+/** Absolute buyer-storefront URL for this line's owner (null when unknown). */
+export async function storeUrl(scope?: string): Promise<string | null> {
+  const business = await loadBusiness(scope).catch(() => null);
+  if (!business) return null;
+  return `${appBaseUrl()}/s/${resolveStoreSlug(business.name, business.storeSlug)}`;
 }
 
 /** "Africa/Lagos (WAT)" -> "Africa/Lagos" */

@@ -140,7 +140,7 @@ export const todoTools: ToolDefinition[] = [
       } catch {
         /* dispatcher re-arms on its own */
       }
-      const business = await loadBusiness().catch(() => null);
+      const business = await loadBusiness(ctx.userId).catch(() => null);
       const { stamp } = nowIn(business?.timezone);
       return { id, text, dueAt: runAt.toISOString(), savedAt: stamp };
     },

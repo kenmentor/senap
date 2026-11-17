@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import mongoose, { Schema } from "mongoose";
 import { dbConnect } from "@/lib/db/mongoose";
 import { agentBase, agentHeaders } from "@/lib/agent";
+import { sessionUser, signedOut, ownedLineIds } from "@/lib/auth-helpers";
 
 const AGENT_URL = agentBase();
 
@@ -91,32 +92,65 @@ function pctDelta(cur: number, prev: number): string {
   return `${d > 0 ? "+" : ""}${d}% vs last week`;
 }
 
-/** Fallback: compute the same stats straight from Mongo (shared DB), so the
- *  home cards work even when the agent process is down. */
-async function localStats() {
+type Stats = {
+  messages7d: number;
+  messagesPrev7d: number;
+  customers7d: number;
+  customersPrev7d: number;
+  pendingTasks: number;
+  toolCalls7d: number;
+  traffic: { day: string; messages: number }[];
+  replies30d: number;
+};
+
+/** Fallback: compute the same stats straight from Mongo (shared DB), scoped
+ *  to this owner's lines, so the home cards work even when the agent is down. */
+async function localStats(lines: string[]): Promise<Stats> {
+  const empty: Stats = {
+    messages7d: 0,
+    messagesPrev7d: 0,
+    customers7d: 0,
+    customersPrev7d: 0,
+    pendingTasks: 0,
+    toolCalls7d: 0,
+    traffic: [],
+    replies30d: 0,
+  };
+  if (lines.length === 0) {
+    const now = new Date();
+    const fmt = new Intl.DateTimeFormat("en-US", { weekday: "short" });
+    empty.traffic = Array.from({ length: 14 }, (_, k) => {
+      const i = 13 - k;
+      const d = new Date(now.getTime() - i * 24 * 60 * 60_000);
+      return { day: i === 0 ? "Today" : fmt.format(d), messages: 0 };
+    });
+    return empty;
+  }
   const now = Date.now();
   const since7 = new Date(now - 7 * 24 * 60 * 60_000);
   const sincePrev = new Date(now - 14 * 24 * 60 * 60_000);
   const since14 = new Date(now - 14 * 24 * 60 * 60_000);
   const since30 = new Date(now - 30 * 24 * 60 * 60_000);
+  const lineFilter = { userId: { $in: lines } };
   const [msgs7d, msgsPrev, cust7d, custPrev, pending, toolCalls7d, perDay, replies30d] =
     await Promise.all([
-      MemoryView.countDocuments({ role: "user", ts: { $gte: since7 } }).catch(() => 0),
-      MemoryView.countDocuments({ role: "user", ts: { $gte: sincePrev, $lt: since7 } }).catch(
+      MemoryView.countDocuments({ ...lineFilter, role: "user", ts: { $gte: since7 } }).catch(() => 0),
+      MemoryView.countDocuments({ ...lineFilter, role: "user", ts: { $gte: sincePrev, $lt: since7 } }).catch(
         () => 0,
       ),
-      ProcessedView.distinct("chatJid", { ts: { $gte: since7 } }).catch(() => [] as unknown[]),
+      ProcessedView.distinct("chatJid", { ...lineFilter, ts: { $gte: since7 } }).catch(() => [] as unknown[]),
       ProcessedView.distinct("chatJid", {
+        ...lineFilter,
         ts: { $gte: sincePrev, $lt: since7 },
       }).catch(() => [] as unknown[]),
-      JobView.countDocuments({ status: "pending" }).catch(() => 0),
-      ToolUseView.countDocuments({ at: { $gte: since7 } }).catch(() => 0),
+      JobView.countDocuments({ ...lineFilter, status: "pending" }).catch(() => 0),
+      ToolUseView.countDocuments({ ...lineFilter, at: { $gte: since7 } }).catch(() => 0),
       MemoryView.aggregate([
-        { $match: { role: "user", ts: { $gte: since14 } } },
+        { $match: { ...lineFilter, role: "user", ts: { $gte: since14 } } },
         { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$ts" } }, count: { $sum: 1 } } },
         { $sort: { _id: 1 } },
       ]).catch(() => [] as { _id: string; count: number }[]),
-      MemoryView.countDocuments({ role: "assistant", ts: { $gte: since30 } }).catch(() => 0),
+      MemoryView.countDocuments({ ...lineFilter, role: "assistant", ts: { $gte: since30 } }).catch(() => 0),
     ]);
   const dayMap = new Map((perDay as { _id: string; count: number }[]).map((d) => [d._id, d.count]));
   const fmt = new Intl.DateTimeFormat("en-US", { weekday: "short" });
@@ -142,28 +176,48 @@ async function localStats() {
 
 /** Dashboard home feed: recent chats + scheduled tasks + tool usage + live metrics. */
 export async function GET() {
-  const [recent, tools, agentStats] = await Promise.all([
+  const me = await sessionUser();
+  if (!me) return signedOut();
+  const lines = await ownedLineIds(me.id).catch(() => [] as string[]);
+  const lineSet = new Set(lines);
+
+  const [recent] = await Promise.all([
     agentGet("/sessions/recent?limit=20"),
-    agentGet("/sessions/tools"),
-    agentGet("/sessions/stats"),
   ]);
-  const chats = (recent as { chats?: unknown } | null)?.chats ?? [];
-  const toolList = (tools as { tools?: unknown } | null)?.tools ?? [];
+  // The agent doesn't know dashboard owners — filter its global feed to my lines.
+  const allChats = (recent as { chats?: unknown } | null)?.chats;
+  const chats = (Array.isArray(allChats) ? allChats : []).filter((c) => {
+    const line = (c as { userId?: unknown })?.userId;
+    return typeof line === "string" && lineSet.has(line);
+  });
+
+  // Tool usage is per line on the agent — merge my lines' counts.
+  const toolTotals = new Map<string, number>();
+  await Promise.all(
+    lines.map(async (line) => {
+      const t = (await agentGet(`/sessions/tools?userId=${encodeURIComponent(line)}`)) as {
+        tools?: { name?: unknown; count?: unknown }[];
+      } | null;
+      const list = Array.isArray(t?.tools) ? t!.tools! : [];
+      for (const row of list) {
+        const name = String(row?.name ?? "");
+        if (!name) continue;
+        toolTotals.set(name, (toolTotals.get(name) ?? 0) + Number(row?.count ?? 0));
+      }
+    }),
+  );
+  const toolList = Array.from(toolTotals.entries()).map(([name, count]) => ({ name, count }));
 
   let scheduled: unknown[] = [];
-  let stats = agentStats as {
-    messages7d: number;
-    messagesPrev7d: number;
-    customers7d: number;
-    customersPrev7d: number;
-    pendingTasks: number;
-    toolCalls7d: number;
-    traffic: { day: string; messages: number }[];
-    replies30d: number;
-  } | null;
+  // NOTE: the agent's /sessions/stats is global across owners — never use it
+  // here. localStats computes the same numbers scoped to my lines.
+  let stats: Stats | null = null;
   try {
     await dbConnect();
-    const docs = await JobView.find({ status: "pending" }).sort({ runAt: 1 }).limit(20).lean();
+    const docs = await JobView.find({ userId: { $in: lines }, status: "pending" })
+      .sort({ runAt: 1 })
+      .limit(20)
+      .lean();
     scheduled = docs.map((d) => ({
       id: String(d._id),
       userId: d.userId,
@@ -172,7 +226,7 @@ export async function GET() {
       text: d.text,
       runAt: d.runAt instanceof Date ? d.runAt.toISOString() : String(d.runAt),
     }));
-    if (!stats) stats = await localStats();
+    stats = await localStats(lines);
   } catch {
     /* DB offline — chats/tools still render; stats fall back on the client */
   }
@@ -196,7 +250,7 @@ export async function GET() {
           {
             label: "Active customers",
             value: String(stats.customers7d),
-            delta: pctDelta(stats.customers7d, stats.customersPrev7d),
+            delta: pctDelta(stats.customersPrev7d, stats.customersPrev7d),
           },
           {
             label: "Lined up",

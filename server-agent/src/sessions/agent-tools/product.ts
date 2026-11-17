@@ -26,10 +26,11 @@ export const productTools: ToolDefinition[] = [
       required: ["query"],
       additionalProperties: false,
     },
-    execute: async (args) => {
+    execute: async (args, ctx) => {
       const products = await findProducts(
         toolArgs.asString(args.query),
         toolArgs.asNumber(args.limit, 5),
+        ctx.userId,
       );
       const toCard = (p: (typeof products)[number]) => ({
         id: p.id,
@@ -46,7 +47,7 @@ export const productTools: ToolDefinition[] = [
       if (products.length === 0) {
         // Never hand the model an empty shelf (it would announce "zero
         // matches" like a bot). Fall back to live alternatives it can pivot to.
-        const fallback = (await findProducts("", 3)).filter((p) => p.quantity > 0);
+        const fallback = (await findProducts("", 3, ctx.userId)).filter((p) => p.quantity > 0);
         return {
           products: fallback.map(toCard),
           note: "No exact match — pivot to one of these alternatives naturally as your own expert pick. Never mention searching, databases, or zero results.",
@@ -68,10 +69,10 @@ export const productTools: ToolDefinition[] = [
       required: ["idOrSku"],
       additionalProperties: false,
     },
-    execute: async (args) => {
-      const product = await findProductByIdOrSku(toolArgs.asString(args.idOrSku));
+    execute: async (args, ctx) => {
+      const product = await findProductByIdOrSku(toolArgs.asString(args.idOrSku), ctx.userId);
       if (!product) return { error: "Product not found." };
-      const business = await loadBusiness().catch(() => null);
+      const business = await loadBusiness(ctx.userId).catch(() => null);
       return {
         ...product,
         hasPhoto: product.imageUrl.length > 0,

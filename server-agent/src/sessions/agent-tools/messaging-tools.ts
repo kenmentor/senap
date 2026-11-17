@@ -64,7 +64,7 @@ export const messagingTools: ToolDefinition[] = [
       additionalProperties: false,
     },
     execute: async (args, ctx) => {
-      const business = await loadBusiness();
+      const business = await loadBusiness(ctx.userId);
       const text = toolArgs.asString(args.text).trim();
       if (!text) return { error: "Message text is empty." };
       // Verified admin line first, else the shop number, else the line itself —

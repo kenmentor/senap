@@ -2,12 +2,15 @@ import { NextResponse } from "next/server";
 import { dbConnect, docId } from "@/lib/db/mongoose";
 import { Product } from "@/lib/db/models/Product";
 import { statusFor } from "@/lib/demo/catalog";
+import { sessionUser, signedOut } from "@/lib/auth-helpers";
 
 function dbError() {
   return NextResponse.json({ error: "Database is offline." }, { status: 503 });
 }
 
 export async function PUT(req: Request, { params }: { params: { id: string } }) {
+  const me = await sessionUser();
+  if (!me) return signedOut();
   try {
     await dbConnect();
     const b = await req.json();
@@ -28,7 +31,7 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
     if (b.unitPrice !== undefined) patch.unitPrice = Math.max(0, Number(b.unitPrice) || 0);
     if (b.costPrice !== undefined) patch.costPrice = Math.max(0, Number(b.costPrice) || 0);
     if (b.sold !== undefined) patch.sold = Math.max(0, Math.floor(Number(b.sold) || 0));
-    const doc = await Product.findByIdAndUpdate(params.id, patch, { new: true }).lean();
+    const doc = await Product.findOneAndUpdate({ _id: params.id, ownerId: me.id }, patch, { new: true }).lean();
     if (!doc) return NextResponse.json({ error: "Not found." }, { status: 404 });
     return NextResponse.json(docId(doc));
   } catch {
@@ -37,9 +40,11 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
 }
 
 export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
+  const me = await sessionUser();
+  if (!me) return signedOut();
   try {
     await dbConnect();
-    const doc = await Product.findByIdAndDelete(params.id).lean();
+    const doc = await Product.findOneAndDelete({ _id: params.id, ownerId: me.id }).lean();
     if (!doc) return NextResponse.json({ error: "Not found." }, { status: 404 });
     return NextResponse.json({ ok: true });
   } catch {

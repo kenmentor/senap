@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { dbConnect } from "@/lib/db/mongoose";
 import { User } from "@/lib/db/models/User";
 import { signSession, sessionCookie } from "@/lib/auth";
+import { settleWorkspace } from "@/lib/claims";
 
 /** One-click demo login — creates the demo account on first use. */
 export async function POST() {
@@ -11,6 +12,7 @@ export async function POST() {
     if (!user) {
       user = await User.create({ name: "Demo Owner", email: "demo@senap.local" });
     }
+    await settleWorkspace(String(user._id), user.email);
     const res = NextResponse.json({ ok: true, name: user.name, email: user.email });
     res.cookies.set(sessionCookie.name, await signSession(user.id), sessionCookie);
     return res;

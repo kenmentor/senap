@@ -129,10 +129,10 @@ export const senapTools: ToolDefinition[] = [
       required: ["idOrSku"],
       additionalProperties: false,
     },
-    execute: async (args) => {
-      const product = await findProductByIdOrSku(toolArgs.asString(args.idOrSku));
+    execute: async (args, ctx) => {
+      const product = await findProductByIdOrSku(toolArgs.asString(args.idOrSku), ctx.userId);
       if (!product) {
-        const near = (await findProducts(toolArgs.asString(args.idOrSku), 3)).map((p) => p.name);
+        const near = (await findProducts(toolArgs.asString(args.idOrSku), 3, ctx.userId)).map((p) => p.name);
         return { error: "Not in our catalogue.", closestInStock: near };
       }
       const spec = specFor(product.sku);
@@ -175,12 +175,12 @@ export const senapTools: ToolDefinition[] = [
       required: ["items"],
       additionalProperties: false,
     },
-    execute: async (args) => {
+    execute: async (args, ctx) => {
       const wants = toolArgs.asStringArray(args.items).slice(0, 3);
       if (wants.length < 2) return { error: "Give me 2–3 phones to compare." };
       const rows = [];
       for (const w of wants) {
-        const p = await findProductByIdOrSku(w);
+        const p = await findProductByIdOrSku(w, ctx.userId);
         if (!p) return { error: `"${w}" is not in our catalogue.` };
         rows.push({ ...p, spec: specFor(p.sku) });
       }
@@ -223,12 +223,12 @@ export const senapTools: ToolDefinition[] = [
       },
       additionalProperties: false,
     },
-    execute: async (args) => {
+    execute: async (args, ctx) => {
       const max = toolArgs.asNumber(args.maxPrice, 0);
       const use = toolArgs.asString(args.use, "general").toLowerCase();
       const cond = toolArgs.asString(args.condition, "any");
       const limit = Math.min(Math.max(Math.floor(toolArgs.asNumber(args.limit, 3)), 1), 5);
-      const all = await findProducts("", 10);
+      const all = await findProducts("", 10, ctx.userId);
       let pool = all.filter((p) => p.quantity > 0);
       if (max > 0) pool = pool.filter((p) => p.unitPrice <= max);
       if (["New", "UK Used", "Used"].includes(cond)) pool = pool.filter((p) => p.condition === cond);

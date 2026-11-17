@@ -542,8 +542,9 @@ app.post("/sessions/:userId/admin/seed-products", async (c) => {
     return c.json({ error: "Send a JSON array of products (or { products: [...] }), max 200." }, 400);
   }
   try {
-    const { upsertProducts } = await import("./sessions/agent-tools/store.js");
-    const res = await upsertProducts(items);
+    const { upsertProducts, ownerIdForLine } = await import("./sessions/agent-tools/store.js");
+    const owner = await ownerIdForLine(userId).catch(() => null);
+    const res = await upsertProducts(items, owner ?? undefined);
     return c.json({ userId, ...res, received: items.length });
   } catch (e) {
     return c.json(
