@@ -147,6 +147,47 @@ export interface IntentProbeResult {
   reason: string;
 }
 
+/** Generic fallbacks when the contextual draft itself fails — still professional. */
+const HOLDING_FALLBACKS = [
+  "On it — please give me a moment.",
+  "Please hold on a moment.",
+];
+
+/**
+ * Draft a CONTEXTUAL holding line for a slow answer: one short professional
+ * bubble that acknowledges what THIS customer actually asked for ("set a
+ * timer" -> setting it, "how much is 15 Pro" -> checking the price), so it
+ * reads as a human mid-thought rather than a generic stall. Cheap (~60
+ * tokens, 6s cap) and only used when the real answer is already running late.
+ * Falls back to a short generic line when the draft itself fails.
+ */
+export async function draftHoldingLine(incomingText: string): Promise<string> {
+  const firstLine = (incomingText ?? "").split("\n")[0].slice(0, 300).trim();
+  if (firstLine) {
+    const system =
+      "You are a professional WhatsApp shop assistant. The customer is waiting while you handle their request. " +
+      "Write ONE short holding reply (max 15 words) that acknowledges their SPECIFIC request in your own professional words — " +
+      "a price question means you are confirming the price, a reminder/timer means you are setting it, a complaint means you are looking into it. " +
+      "Never narrate backend systems. Banned words: search, searching, database, stock, tools, AI, model, system. " +
+      "Plain text only: no emoji, no greeting, no quotes, no hashtags.";
+    try {
+      const res = await client.chat(
+        [
+          { role: "system", content: system },
+          { role: "user", content: firstLine },
+        ],
+        [],
+        { timeoutMs: 6000, maxTokens: 40 },
+      );
+      const line = cleanReply((res.content ?? "").trim()).split("\n")[0].trim();
+      if (line && line.length <= 160) return line;
+    } catch {
+      /* fall through to a generic line */
+    }
+  }
+  return HOLDING_FALLBACKS[Math.floor(Math.random() * HOLDING_FALLBACKS.length)];
+}
+
 /**
  * Ambiguous middle band resolver: instead of brittle keyword lists, ask the
  * model whether THIS message needs a reply given the assistant's AIM. Cheap

@@ -982,28 +982,15 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
     return isSelfJid(participantId, selfId);
   }
 
-  /** Last holding-line index per chat, so slow replies don't repeat themselves. */
-  private lastHolding = new Map<string, number>();
-
-  /**
-   * Short professional stall lines for slow answers. Plain staff talk — never
-   * backend narration ("searching", "database", "checking stock" are banned
-   * by the house style and would smell like a bot). The line is also added
-   * to conversation history, so the model sees it and continues naturally
-   * instead of re-greeting (see the holding-line note in the system prompt).
-   */
-  private static readonly HOLDING_LINES = [
-    "On it — please give me a moment while I confirm that for you.",
-    "Please hold on a moment, I'm checking it now.",
-    "Got it — one moment while I put everything together.",
-    "Thanks for your patience — almost done, just rounding it up for you.",
-  ];
+  /** Last holding line per chat, so slow replies never repeat themselves. */
+  private lastHoldingLine = new Map<string, string>();
 
   /**
    * When the answer is taking a while (tool calls, slow model), act like a
-   * human who was seen reading: blue ticks + ONE short bubble, then the real
-   * answer lands normally. 1:1 chats only — groups stay quiet unless the
-   * reply gate already decided to answer.
+   * human who was seen reading: blue ticks + ONE short contextual bubble
+   * drafted from the customer's actual message (see draftHoldingLine), then
+   * the real answer lands on top like a follow-up message. 1:1 chats only —
+   * groups stay quiet unless the reply gate already decided to answer.
    */
   private async sendHoldingLine(
     remoteJid: string,
@@ -1011,13 +998,14 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
   ): Promise<string | null> {
     const sock = this.liveSock();
     if (!sock || !opts.keyId) return null;
-    const lines = WhatsappSession.HOLDING_LINES;
-    const last = this.lastHolding.get(remoteJid) ?? -1;
-    let idx = Math.floor(Math.random() * lines.length);
-    if (lines.length > 1 && idx === last) idx = (idx + 1) % lines.length;
-    this.lastHolding.set(remoteJid, idx);
-    const line =
-      opts.isOwner && !remoteJid.endsWith("@g.us") ? `[agent] ${lines[idx]}` : lines[idx];
+    const { draftHoldingLine } = await import("../assistant/agent-runner.js");
+    let line = await draftHoldingLine(opts.text).catch(() => null);
+    if (!line) return null;
+    if (this.lastHoldingLine.get(remoteJid) === line) {
+      line = "Please give me one more moment.";
+    }
+    this.lastHoldingLine.set(remoteJid, line);
+    if (opts.isOwner && !remoteJid.endsWith("@g.us")) line = `[agent] ${line}`;
     try {
       await sock.readMessages([
         { remoteJid, id: opts.keyId, fromMe: false, participant: opts.participant ?? null },
