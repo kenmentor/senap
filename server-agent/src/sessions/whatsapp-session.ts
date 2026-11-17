@@ -69,6 +69,12 @@ function splitReply(text: string, max = 3, soft = 320): string[] {
 import { wasProcessed, markProcessed } from "./processed.js";
 
 /**
+ * Keyword fallback when the legitimacy probe is down: a price figure or
+ * selling words in the caption. Conservative — plain vibes never list.
+ */
+const SELL_WORDS = /(price|stock|available|sizes?|colou?rs?|\bdm\b|order|buy|sell|wholesale|retail|promo|discount|deliver|pick\s?up|call\s|new arrival|uk used|for sale|₦|NGN|₵|GHS|KSh|\$|\d[\d,]*\s*k\b|\d[\d,]{3,})/i;
+
+/**
  * Draft a product from a status caption. Name = first line; price sniffs
  * "150k", "₦155,000", "$200", "₵500" style figures (k-suffix = thousands).
  */
@@ -229,6 +235,16 @@ export class WhatsappSession {
   }
 
   private stopped = false;
+
+  /** Last meaningful session activity (start, qr, open, close) — drives the abandoned-session sweep. */
+  private lastTouchAt = Date.now();
+  private touchSession(): void {
+    this.lastTouchAt = Date.now();
+  }
+  /** Milliseconds timestamp of last activity (for SessionManager.sweepAbandoned). */
+  lastTouchedAt(): number {
+    return this.lastTouchAt;
+  }
 
   /** Consecutive failed (re)connects — drives the backoff so a dead network
    *  or WhatsApp outage retries patiently instead of spinning hot. */
@@ -871,6 +887,7 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
    */
   async start(timeoutMs = 90_000): Promise<void> {
     this.stopped = false;
+    this.touchSession();
     const dialling = !!this.connectPromise && this.connectEpoch === this.epoch;
     if (this.status !== "open" && this.status !== "qr" && !dialling) {
       this.status = "starting";
@@ -946,6 +963,7 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
     this.stopped = true;
     this.qr = null;
     this.pairingCode = null;
+    this.touchSession();
     // Free RAM when not in use: drop all per-chat state. It reseeds from
     // WhatsApp sync + Mongo on next start, so stopping is a real memory reset.
     this.histories.clear();
@@ -1232,11 +1250,13 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
 
   /**
    * Status → product auto-import. When the OWNER posts a photo/video status
-   * from their phone, the linked device receives it on `status@broadcast` —
-   * we download the media, draft a product from the caption, save it to this
-   * line's store, and ping the owner's own chat to confirm. Anyone else's
-   * status is dropped silently (never replied to, never logged as a chat).
-   * Text-only statuses are skipped — there is nothing to sell from them.
+   * from their phone, the linked device receives it on `status@broadcast`.
+   * The caption is judged first: only genuine product posts become listings
+   * (anything else is dropped). Media goes to Cloudinary when configured
+   * (public URL the store, dashboard and agent-photo sends all share),
+   * else an embedded data URL. The owner's own chat gets a confirm or a
+   * one-line skip note. Anyone else's status is dropped silently (never
+   * replied to, never logged as a chat). Text-only statuses are skipped.
    */
   private async handleStatusPost(
     m: WAMessage,
@@ -1265,12 +1285,44 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
     if (already) return;
 
     const caption = ((img?.caption ?? vid?.caption ?? "") as string).trim();
-    const { name, price } = parseStatusCaption(caption);
-    const condition = /uk\s*used/i.test(caption) ? ("UK Used" as const) : ("New" as const);
+    const kind = vid ? ("video" as const) : ("photo" as const);
 
-    // Photo bytes for the store listing (capped — protects the product doc).
-    // Oversized videos still list, just without a photo for now.
-    let photoDataUrl = "";
+    // Legitimacy gate: caption must read as a genuine product post.
+    const { classifyStatusPost } = await import("../assistant/agent-runner.js");
+    const verdict = await classifyStatusPost(caption, kind).catch(() => null);
+    let name: string;
+    let price: number;
+    let condition: "New" | "UK Used" | "Used";
+    if (verdict) {
+      if (!verdict.isProduct) {
+        await this.noteStatusSkip(sock, mid, m, `Noted — skipped (didn't read as a product: ${verdict.reason || "no offer found"}). Add a name + price in the caption to list it.`);
+        return;
+      }
+      name = verdict.name || parseStatusCaption(caption).name;
+      price = verdict.price;
+      condition = verdict.condition;
+    } else {
+      // Classifier down — keyword fallback: price figure or selling words.
+      const parsed = parseStatusCaption(caption);
+      const looksSellish = parsed.price > 0 || SELL_WORDS.test(caption);
+      if (!looksSellish) {
+        await this.noteStatusSkip(sock, mid, m, `Noted — skipped (couldn't confirm it's a product). Add a name + price in the caption to list it.`);
+        return;
+      }
+      name = parsed.name;
+      price = parsed.price;
+      condition = /uk\s*used/i.test(caption) ? "UK Used" : "New";
+    }
+
+    const { createShopProduct, ownerIdForLine, currencySymbol, loadBusiness } = await import(
+      "./agent-tools/store.js"
+    );
+    const owner = await ownerIdForLine(this.userId).catch(() => null);
+
+    // Media bytes for the listing: Cloudinary URL when configured (shared
+    // everywhere), else an embedded data URL. Oversized media still lists,
+    // just without a photo for now.
+    let photoUrl = "";
     let tooBig = false;
     try {
       const buf = (await downloadMediaMessage(
@@ -1281,8 +1333,14 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
       )) as Buffer;
       const mime = (img?.mimetype ?? vid?.mimetype ?? "") as string;
       if (buf && buf.length > 0 && /^(image|video)\//.test(mime)) {
-        if (buf.length <= 4_000_000) {
-          photoDataUrl = `data:${mime};base64,${buf.toString("base64")}`;
+        if (buf.length <= 12_000_000) {
+          const { uploadProductMedia } = await import("./media-store.js");
+          photoUrl = (await uploadProductMedia(buf, mime, owner).catch(() => null)) ?? "";
+          if (!photoUrl && buf.length <= 4_000_000) {
+            photoUrl = `data:${mime};base64,${buf.toString("base64")}`;
+          } else if (!photoUrl) {
+            tooBig = true;
+          }
         } else {
           tooBig = true;
         }
@@ -1291,10 +1349,6 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
       /* photo is a bonus — the listing goes up regardless */
     }
 
-    const { createShopProduct, ownerIdForLine, currencySymbol, loadBusiness } = await import(
-      "./agent-tools/store.js"
-    );
-    const owner = await ownerIdForLine(this.userId).catch(() => null);
     const business = await loadBusiness(this.userId).catch(() => null);
     const created = await createShopProduct({
       ownerId: owner,
@@ -1303,7 +1357,7 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
       unitPrice: price,
       quantity: 1,
       condition,
-      image: photoDataUrl,
+      image: photoUrl,
     });
     const ts = m.messageTimestamp;
     await markProcessed(
@@ -1324,14 +1378,43 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
       `${created.name} — ${priceLine} (qty 1)`,
       tooBig
         ? `The video was too large to attach — send a photo here and I'll add it.`
-        : price <= 0
-          ? `No price found in the caption — set it in Products.`
-          : `Tweak price or qty any time in Products.`,
+        : !photoUrl
+          ? `No photo attached — send one here and I'll add it.`
+          : price <= 0
+            ? `No price found in the caption — set it in Products.`
+            : `Tweak price or qty any time in Products.`,
     ];
     try {
       await this.sendNaturalReply(meJid, lines.join("\n"));
     } catch {
       /* listing is saved; the ping is best-effort */
+    }
+  }
+
+  /**
+   * One quiet owner-chat note for a skipped status post (media only — text
+   * statuses die silently). Marks the id processed so a restart never
+   * re-pings, and never throws: skips must be invisible on failure too.
+   */
+  private async noteStatusSkip(
+    sock: ReturnType<typeof makeWASocket>,
+    mid: string,
+    m: WAMessage,
+    text: string,
+  ): Promise<void> {
+    try {
+      const ts = m.messageTimestamp;
+      await markProcessed(
+        this.userId,
+        "status@broadcast",
+        mid,
+        new Date(typeof ts === "number" ? ts * 1000 : Number(ts ?? Date.now())),
+      );
+      const meJid = (sock.user as unknown as { id?: string } | null | undefined)?.id ?? null;
+      if (!meJid) return;
+      await this.sendNaturalReply(meJid, text);
+    } catch {
+      /* skips stay silent on any failure */
     }
   }
 
@@ -1595,6 +1678,25 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
       return;
     }
     this.sock = sock;
+    this.touchSession();
+
+    // Stale-dial guard: if WhatsApp never answers (no qr/open/close), the
+    // session would sit in "starting" forever — an invisible dead bot the
+    // dashboard shows as "Starting…". After 45s with no progress, kill the
+    // socket so the normal closed/backoff path (and the dashboard) sees a
+    // real state instead of limbo.
+    const stallTimer = setTimeout(() => {
+      if (this.stopped || epoch !== this.epoch || this.sock !== sock) return;
+      if (this.status === "starting") {
+        console.log(`Session ${this.userId} dial stalled — closing stale socket`);
+        this.status = "closed";
+        this.touchSession();
+        const dead = this.sock;
+        this.sock = null;
+        dead?.end(undefined).catch(() => {});
+      }
+    }, 45_000);
+    (stallTimer as unknown as { unref?: () => void }).unref?.();
 
     // Pull previous context from WhatsApp itself on every connect: the full
     // contact roster plus recent messages. Nothing is written to our database
@@ -1644,6 +1746,7 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
         if (epoch !== this.epoch || this.stopped || this.sock !== sock) return;
         this.qr = qr;
         this.status = "qr";
+        this.touchSession();
         qrcode.generate(qr, { small: true });
       }
       if (connection === "close") {
@@ -1662,6 +1765,7 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
             this.pairingCode = null;
             this.sock = null;
             this.histories.clear();
+            this.touchSession();
           }
           try {
             await this.clearAuth?.();
@@ -1674,6 +1778,7 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
         }
         if (mine) this.sock = null;
         this.status = mine ? "closed" : this.status;
+        if (mine) this.touchSession();
         const reason = lastDisconnect?.error;
         const reasonMsg = reason instanceof Error ? reason.message : String(reason ?? "unknown");
         const offline =
@@ -1724,6 +1829,7 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
         this.pairingCode = null;
         this.status = "open";
         this.reconnectFailures = 0;
+        this.touchSession();
         console.log(`Session ${this.userId} opened connection`);
         // Pick up anything that arrived while we were down.
         this.scheduleCatchUp(epoch);
@@ -2052,6 +2158,16 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
           /* default voice on any failure */
         }
       }
+      // Saved manner notes: standing instructions for this chat + line
+      // (owner-taught rules and per-person preferences). Null = none yet.
+      // Groups and owner chats get them too — a group can have its own rules.
+      let promptNotes: string | null = null;
+      try {
+        const { getPromptNotesBlock } = await import("./agent-tools/prompt-note-tools.js");
+        promptNotes = await getPromptNotesBlock(this.userId, remoteJid).catch(() => null);
+      } catch {
+        /* proceed without notes */
+      }
       this.rememberContact(remoteJid, pushName ?? undefined);
       if (!alreadyLogged && rawForLog) this.logIncoming(remoteJid, rawForLog, displayText, kind);
       // All socket writes go through the session-wide serializer: one account,
@@ -2193,19 +2309,20 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
               .catch(() => {});
           }, 8000);
         }
-        try {
-          return await handleCustomerMessage({
-            userId: this.userId,
-            customerJid: remoteJid,
-            incomingText: displayText,
-            history: history.all(),
-            sendText: scoped.sendText,
-            sock: scoped.sock,
-            contacts: scoped.contacts,
-            messageLog: scoped.messageLog,
-            group,
-            style,
-          });
+      try {
+        return await handleCustomerMessage({
+          userId: this.userId,
+          customerJid: remoteJid,
+          incomingText: displayText,
+          history: history.all(),
+          sendText: scoped.sendText,
+          sock: scoped.sock,
+          contacts: scoped.contacts,
+          messageLog: scoped.messageLog,
+          group,
+          style,
+          promptNotes,
+        });
         } finally {
           settled = true;
           if (holdingTimer) clearTimeout(holdingTimer);

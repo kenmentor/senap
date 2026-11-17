@@ -54,6 +54,7 @@ async function bootResilient(): Promise<void> {
   }
   setInterval(() => {
     void reconcile().catch((err) => console.error("Reconcile failed:", err));
+    void sessions.sweepAbandoned().catch((err) => console.error("Sweep failed:", err));
     try {
       sessions.trimAll();
     } catch {

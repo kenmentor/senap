@@ -90,7 +90,59 @@ function WhatsAppAvatar({ engineId, meJid, number, name }: { engineId: string; m
 
 const QR_STEPS = ["Open WhatsApp on your phone", "Go to Settings → Linked devices", "Tap Link a device", "Point your phone at the code above"];
 
-const CODE_STEPS = ["Enter the WhatsApp number below, with country code", "Tap Get code — an 8-character code appears", "On your phone: WhatsApp → Settings → Linked devices", "Tap Link a device → “Link with phone number instead”", "Type in the code — your agent connects by itself"];
+const CODE_STEPS = ["Pick your country code and enter the WhatsApp number", "Tap Get code — an 8-character code appears", "On your phone: WhatsApp → Settings → Linked devices", "Tap Link a device → “Link with phone number instead”", "Type in the code — your agent connects by itself"];
+
+/** Dialing prefixes (longest first so business-number matching hits right). */
+const COUNTRY_CODES = [
+  { cc: "234", label: "Nigeria +234" },
+  { cc: "233", label: "Ghana +233" },
+  { cc: "254", label: "Kenya +254" },
+  { cc: "256", label: "Uganda +256" },
+  { cc: "255", label: "Tanzania +255" },
+  { cc: "250", label: "Rwanda +250" },
+  { cc: "251", label: "Ethiopia +251" },
+  { cc: "27", label: "South Africa +27" },
+  { cc: "260", label: "Zambia +260" },
+  { cc: "263", label: "Zimbabwe +263" },
+  { cc: "265", label: "Malawi +265" },
+  { cc: "267", label: "Botswana +267" },
+  { cc: "237", label: "Cameroon +237" },
+  { cc: "221", label: "Senegal +221" },
+  { cc: "225", label: "Ivory Coast +225" },
+  { cc: "220", label: "Gambia +220" },
+  { cc: "224", label: "Guinea +224" },
+  { cc: "231", label: "Liberia +231" },
+  { cc: "232", label: "Sierra Leone +232" },
+  { cc: "241", label: "Gabon +241" },
+  { cc: "242", label: "Congo +242" },
+  { cc: "243", label: "DR Congo +243" },
+  { cc: "261", label: "Madagascar +261" },
+  { cc: "252", label: "Somalia +252" },
+  { cc: "20", label: "Egypt +20" },
+  { cc: "212", label: "Morocco +212" },
+  { cc: "971", label: "UAE +971" },
+  { cc: "966", label: "Saudi +966" },
+  { cc: "91", label: "India +91" },
+  { cc: "92", label: "Pakistan +92" },
+  { cc: "880", label: "Bangladesh +880" },
+  { cc: "63", label: "Philippines +63" },
+  { cc: "62", label: "Indonesia +62" },
+  { cc: "44", label: "UK +44" },
+  { cc: "1", label: "US/Canada +1" },
+].sort((a, b) => b.cc.length - a.cc.length || a.label.localeCompare(b.label));
+
+/**
+ * Normalize a typed number against the selected country: drop trunk zeros,
+ * drop 00, and prepend the country code when the user typed a local number.
+ */
+function normalizePhone(cc: string, raw: string): string {
+  let d = raw.replace(/\D/g, "");
+  if (d.startsWith("00")) d = d.slice(2);
+  if (!d) return "";
+  if (d.startsWith("0")) return cc + d.slice(1);
+  if (!d.startsWith(cc) && d.length <= 10) return cc + d;
+  return d;
+}
 
 function Steps({ items }: { items: string[] }) {
   return (
@@ -142,14 +194,28 @@ export default function LinkPage() {
   /** engineId being relinked (null = linking a brand-new number). */
   const [relinkTarget, setRelinkTarget] = useState<string | null>(null);
   const pollRef = useRef<number | null>(null);
+  /** True when THIS sheet opening started the session (so closing an
+      unfinished link stops the orphan instead of leaking a live socket). */
+  const startedHereRef = useRef(false);
+  /** Country prefix for the pairing-code number, auto-guessed from the shop line. */
+  const [cc, setCc] = useState("234");
+  const [bizPhone, setBizPhone] = useState("");
 
-  /** First unused device name: my-shop, my-shop-2, my-shop-3, … */
+  /** Auto-minted unique device name: shop-<random> (editable, always unique). */
   const suggestName = (list: Account[]) => {
     const taken = new Set(list.map((a) => engineIdOf(a).toLowerCase()));
-    if (!taken.has("my-shop")) return "my-shop";
-    let n = 2;
-    while (taken.has(`my-shop-${n}`)) n++;
-    return `my-shop-${n}`;
+    for (let i = 0; i < 25; i++) {
+      const cand = `shop-${Math.random().toString(36).slice(2, 8)}`;
+      if (!taken.has(cand)) return cand;
+    }
+    return `shop-${Date.now().toString(36)}`;
+  };
+
+  /** Guess the dialing country from the shop's own number (+234… → 234). */
+  const guessCc = (businessPhone: string): string | null => {
+    const digits = businessPhone.replace(/\D/g, "");
+    const hit = COUNTRY_CODES.find((c) => digits.startsWith(c.cc));
+    return hit ? hit.cc : null;
   };
 
   const openPickerForNew = () => {
@@ -164,6 +230,10 @@ export default function LinkPage() {
     setPairError(null);
     setCopied(false);
     setActionError(null);
+    startedHereRef.current = false;
+    // Default the country prefix from the shop's own number.
+    const guessed = guessCc(bizPhone);
+    if (guessed) setCc(guessed);
     setPickerOpen(true);
   };
 
@@ -174,6 +244,18 @@ export default function LinkPage() {
         if (res.ok) setAccounts(await res.json());
       } catch {
         /* offline — page still works locally */
+      }
+      try {
+        const res = await fetch("/api/settings");
+        if (res.ok) {
+          const s = await res.json();
+          const phone = typeof s?.business?.phone === "string" ? s.business.phone : "";
+          setBizPhone(phone);
+          const guessed = guessCc(phone);
+          if (guessed) setCc(guessed);
+        }
+      } catch {
+        /* country prefix stays on default */
       }
     })();
   }, []);
@@ -244,6 +326,25 @@ export default function LinkPage() {
     return data;
   };
 
+  /**
+   * Claim ownership of this sheet's session lifecycle: if the session is NOT
+   * already connected (relink of a live line), closing an unfinished sheet
+   * stops the socket we dialled instead of leaking it.
+   */
+  const markStartedHere = async (id: string) => {
+    try {
+      const res = await fetch(`/api/agent/sessions/${encodeURIComponent(id)}`);
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        startedHereRef.current = !data.connected;
+        return;
+      }
+    } catch {
+      /* assume ours — close cleans up */
+    }
+    startedHereRef.current = true;
+  };
+
   const startLinking = async () => {
     const id = userId.trim();
     if (!id) {
@@ -264,6 +365,7 @@ export default function LinkPage() {
     setError(null);
     setQr(null);
     setPhase("starting");
+    await markStartedHere(id);
     try {
       const res = await fetch(`/api/agent/sessions/${encodeURIComponent(id)}/start`, { method: "POST" });
       if (!res.ok) {
@@ -290,6 +392,10 @@ export default function LinkPage() {
   };
 
   const closeSheet = () => {
+    const id = userId.trim();
+    // Abandoned link = orphan live socket. If THIS sheet started the session
+    // and the link never completed, stop it so dead bots don't pile up.
+    const shouldStop = startedHereRef.current && phase !== "connected" && id;
     stopPolling();
     setPickerOpen(false);
     setRelinkTarget(null);
@@ -302,6 +408,10 @@ export default function LinkPage() {
     setPairError(null);
     setCopied(false);
     setActionError(null);
+    startedHereRef.current = false;
+    if (shouldStop) {
+      fetch(`/api/agent/sessions/${encodeURIComponent(id)}/stop`, { method: "POST" }).catch(() => {});
+    }
   };
 
   /** Watch a starting session until WhatsApp confirms the link (code mode). */
@@ -328,8 +438,7 @@ export default function LinkPage() {
     }, 2500);
   };
 
-  /** Switch QR ⇄ code: stop whatever the other mode was polling. */
-  const switchMode = (m: "qr" | "code") => {
+  /** Switch QR ⇄ code: stop whatever the other mode was polling. */  const switchMode = (m: "qr" | "code") => {
     if (m === linkMode) return;
     stopPolling();
     setLinkMode(m);
@@ -350,13 +459,13 @@ export default function LinkPage() {
    */
   const requestPairCode = async () => {
     const id = userId.trim();
-    const digits = phone.replace(/\D/g, "");
+    const digits = normalizePhone(cc, phone);
     if (!id) {
       setPairError("Enter a device name first.");
       return;
     }
     if (digits.length < 8 || digits.length > 15) {
-      setPairError("Enter the full WhatsApp number with country code (e.g. 2348012345678).");
+      setPairError("Enter the full WhatsApp number — pick the country code, then the local number.");
       return;
     }
     if (relinkTarget === null && accounts.some((a) => engineIdOf(a).toLowerCase() === id.toLowerCase())) {
@@ -368,6 +477,7 @@ export default function LinkPage() {
     setPairError(null);
     setPairCode(null);
     setCopied(false);
+    await markStartedHere(id);
     try {
       const startRes = await fetch(`/api/agent/sessions/${encodeURIComponent(id)}/start`, { method: "POST" });
       if (!startRes.ok) {
@@ -581,6 +691,7 @@ export default function LinkPage() {
     const id = engineIdOf(a) || a.number;
     setUserId(id);
     setRelinkTarget(id);
+    startedHereRef.current = false;
     setPhase("idle");
     setQr(null);
     setError(null);
@@ -692,12 +803,12 @@ export default function LinkPage() {
               <input
                 value={userId}
                 onChange={(e) => { setUserId(e.target.value); setRelinkTarget(null); }}
-                placeholder="my-shop"
+                placeholder="shop-…"
                 className="mt-1.5 w-full rounded-xl px-3.5 text-[13.5px] outline-none"
                 style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", color: "#e9edef", height: 44 }}
               />
               <span className="mt-1 block text-[11.5px]" style={{ color: "#636c73" }}>
-                Each number needs its own unused name — reusing one reconnects the old session instead of scanning a new code.
+                Auto-generated and unique — rename it if you like. Each number needs its own name.
               </span>
             </label>
 
@@ -737,17 +848,35 @@ export default function LinkPage() {
               ) : linkMode === "code" ? (
                 <>
                   <label className="block w-full text-[12px] font-medium" style={{ color: "#8a949b" }}>
-                    WhatsApp number (with country code)
-                    <input
-                      value={phone}
-                      onChange={(e) => setPhone(e.target.value.replace(/[^\d+ ]/g, ""))}
-                      placeholder="e.g. 2348012345678"
-                      inputMode="tel"
-                      autoComplete="tel"
-                      className="mt-1.5 w-full rounded-xl px-3.5 text-[15px] outline-none"
-                      style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", color: "#e9edef", height: 48 }}
-                    />
+                    WhatsApp number
+                    <span className="mt-1.5 flex gap-2">
+                      <select
+                        value={cc}
+                        onChange={(e) => setCc(e.target.value)}
+                        aria-label="Country code"
+                        className="shrink-0 rounded-xl px-2.5 text-[14px] font-semibold outline-none"
+                        style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", color: "#e9edef", height: 48, maxWidth: 128 }}
+                      >
+                        {COUNTRY_CODES.map((c) => (
+                          <option key={c.cc} value={c.cc} style={{ background: "#111b21" }}>+{c.cc} · {c.label.split(" +")[0]}</option>
+                        ))}
+                      </select>
+                      <input
+                        value={phone}
+                        onChange={(e) => setPhone(e.target.value.replace(/[^\d ]/g, ""))}
+                        placeholder="801 234 5678"
+                        inputMode="tel"
+                        autoComplete="tel"
+                        className="min-w-0 flex-1 rounded-xl px-3.5 text-[15px] outline-none"
+                        style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", color: "#e9edef", height: 48 }}
+                      />
+                    </span>
                   </label>
+                  {phone.replace(/\D/g, "") && (
+                    <p className="mt-1.5 w-full truncate text-center font-mono text-[12px]" style={{ color: "#00d19f" }}>
+                      Will link: +{normalizePhone(cc, phone).replace(new RegExp(`^${cc}`), `${cc} `)}
+                    </p>
+                  )}
                   {pairCode ? (
                     <button
                       onClick={copyCode}

@@ -121,7 +121,7 @@ const SettingsView =
   );
 
 /** WhatsApp line → dashboard owner mapping (linkedaccounts collection). */
-const AccountView =
+export const AccountView =
   mongoose.models.ToolAccount ??
   mongoose.model(
     "ToolAccount",

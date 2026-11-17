@@ -57,6 +57,41 @@ export default class SessionManager {
     return true;
   }
 
+  /**
+   * Reap linking attempts that never completed: sessions with NO linked
+   * account behind them, quiet longer than the TTL. Confirmed lines are the
+   * reconciler's job — never touched here. Open-but-unconfirmed sessions get
+   * a longer grace (the user may still press Done on the Link page).
+   */
+  async sweepAbandoned(idleMs = 10 * 60_000, openIdleMs = 30 * 60_000): Promise<string[]> {
+    const reaped: string[] = [];
+    const mod = (await import("./agent-tools/store.js").catch(() => null)) as unknown as {
+      AccountView?: { findOne(filter: Record<string, unknown>): { select(s: string): { lean(): Promise<unknown> } } };
+    } | null;
+    const accountView = mod?.AccountView ?? null;
+    if (!accountView) return reaped; // registry unreadable — fail safe, reap nothing
+    const now = Date.now();
+    for (const s of this.sessions.values()) {
+      try {
+        const quietFor = now - s.lastTouchedAt();
+        if (s.isConnected() ? quietFor < openIdleMs : quietFor < idleMs) continue;
+        // Any linked account (or an unreadable registry) shields the session.
+        const doc = await accountView
+          .findOne({ engineId: s.userId })
+          .select("_id")
+          .lean()
+          .catch(() => "unreadable");
+        if (doc) continue;
+        console.log(`Sweep: stopping abandoned session ${s.userId} (quiet ${Math.round(quietFor / 1000)}s)`);
+        await s.stop().catch(() => {});
+        reaped.push(s.userId);
+      } catch {
+        /* one bad session must not break the sweep */
+      }
+    }
+    return reaped;
+  }
+
   /** Free RAM in idle chats across all sessions (amortized, cheap). */
   trimAll(): void {
     for (const s of this.sessions.values()) {
