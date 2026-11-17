@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { Plus, RefreshCw, Check, MessageCircle, Clock3, Zap, X } from "lucide-react";
+import { Plus, RefreshCw, Check, MessageCircle, Clock3, Zap, X, Sparkles, Send } from "lucide-react";
 import { formatUpdated, lowCount, statusOf, thumbFor, LOW_AT, type Item } from "@/lib/demo/catalog";
 
 type RecentChat = { userId: string; jid: string; name: string; imgUrl?: string | null; text: string; fromMe: boolean; ts: number; messages: number };
@@ -40,6 +40,51 @@ function dueIn(iso: string): string {
   const h = Math.floor(m / 60);
   if (h < 24) return `in ${h}h`;
   return `in ${Math.floor(h / 24)}d`;
+}
+
+function prettyTool(name: string): string {
+  return (name || "unknown").replace(/_/g, " ").replace(/\s+/g, " ").trim() || "unknown";
+}
+
+/** One queued reminder/promo: icon by kind, full text (2 lines), chat + due pills. */
+function ScheduledRow({ job, onCancel }: { job: ScheduledJob; onCancel: (id: string) => void }) {
+  const composed = job.kind === "agent";
+  const due = dueIn(job.runAt);
+  const chat = (job.chat || "").split("@")[0];
+  return (
+    <li className="flex items-center gap-3 rounded-2xl p-3" style={{ background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.07)" }}>
+      <span
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
+        style={composed ? { background: "rgba(0,168,132,0.12)", color: "#00d19f" } : { background: "rgba(66,133,244,0.12)", color: "#7aa5f8" }}
+        title={composed ? "She composes it fresh" : "Sends as-is"}
+      >
+        {composed ? <Sparkles size={16} /> : <Send size={15} />}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="line-clamp-2 block text-[13px] font-medium leading-snug" style={{ color: "#e9edef" }}>
+          {job.text || "(no text)"}
+        </span>
+        <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
+          {chat ? (
+            <span className="max-w-[140px] truncate rounded-full px-2 py-0.5 text-[10.5px] font-semibold" style={{ background: "rgba(255,255,255,0.06)", color: "#aebac1" }}>
+              {chat}
+            </span>
+          ) : null}
+          {due ? (
+            <span className="rounded-full px-2 py-0.5 text-[10.5px] font-bold" style={{ background: "rgba(0,168,132,0.12)", color: "#00d19f" }}>
+              {due}
+            </span>
+          ) : null}
+          <span className="text-[10.5px]" style={{ color: "#636c73" }}>
+            {composed ? "She composes it fresh" : "Sends as-is"}
+          </span>
+        </span>
+      </span>
+      <button onClick={() => onCancel(job.id)} aria-label="Cancel task" title="Cancel" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition hover:bg-white/10 active:bg-white/15 sm:h-8 sm:w-8" style={{ color: "#636c73" }}>
+        <X size={14} />
+      </button>
+    </li>
+  );
 }
 
 function ChatAvatar({ jid, name, imgUrl }: { jid: string | null | undefined; name: string | null | undefined; imgUrl?: string | null }) {
@@ -290,42 +335,63 @@ export default function DashboardHome() {
             </span>
           </div>
           {scheduled.length === 0 ? (
-            <p className="mt-4 rounded-xl p-4 text-center text-[13px]" style={{ background: "rgba(255,255,255,0.03)", color: "#636c73", border: "1px dashed rgba(255,255,255,0.12)" }}>
-              Nothing queued — tell her “remind me…”, “send the promo at 9am”, or “follow up tomorrow” in any chat.
-            </p>
+            <div className="mt-3 flex items-center gap-3 rounded-2xl p-4" style={{ background: "rgba(255,255,255,0.02)", border: "1px dashed rgba(255,255,255,0.1)" }}>
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl" style={{ background: "rgba(255,255,255,0.05)", color: "#636c73" }}>
+                <Clock3 size={16} />
+              </span>
+              <p className="text-[12.5px] leading-snug" style={{ color: "#8a949b" }}>
+                Nothing queued — tell her <span style={{ color: "#cfd6db" }}>“remind me…”</span>, <span style={{ color: "#cfd6db" }}>“send the promo at 9am”</span>, or <span style={{ color: "#cfd6db" }}>“follow up tomorrow”</span> in any chat.
+              </p>
+            </div>
           ) : (
-            <ul className="mt-2 flex max-h-[320px] flex-col gap-2 overflow-y-auto">
+            <ul className="mt-3 flex max-h-[320px] flex-col gap-2 overflow-y-auto">
               {scheduled.map((j) => (
-                <li key={j.id} className="flex items-center gap-3 rounded-2xl p-3" style={{ background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.07)" }}>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[13px] font-medium" style={{ color: "#e9edef" }}>{j.text}</span>
-                    <span className="mt-0.5 block truncate text-[11.5px]" style={{ color: "#636c73" }}>
-                      {j.kind === "agent" ? "She composes it fresh" : "Sends as-is"} · {j.chat.split("@")[0]} · {dueIn(j.runAt)}
-                    </span>
-                  </span>
-                  <button onClick={() => cancelJob(j.id)} aria-label="Cancel task" title="Cancel" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition hover:bg-white/10 active:bg-white/15 sm:h-8 sm:w-8" style={{ color: "#636c73" }}>
-                    <X size={14} />
-                  </button>
-                </li>
+                <ScheduledRow key={j.id} job={j} onCancel={cancelJob} />
               ))}
             </ul>
           )}
 
-          {/* Functions used so far */}
-          <h3 className="mt-5 flex items-center gap-2 text-[13px] font-semibold" style={{ color: "#e9edef" }}>
-            <Zap size={14} style={{ color: "#00a884" }} /> Functions she&apos;s used
-          </h3>
-          {tools.length === 0 ? (
-            <p className="mt-2 text-[12px]" style={{ color: "#636c73" }}>No tool calls recorded yet in this window.</p>
-          ) : (
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {tools.slice(0, 12).map((t) => (
-                <span key={t.name} className="rounded-full px-3 py-1.5 text-[11.5px] font-semibold" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: "#aebac1" }}>
-                  {t.name.replace(/_/g, " ")} · {t.count}
-                </span>
-              ))}
-            </div>
-          )}
+          {/* Tool activity — what she's actually been doing */}
+          {(() => {
+            const ranked = [...tools].sort((a, b) => b.count - a.count).slice(0, 5);
+            const total = tools.reduce((n, t) => n + (t.count || 0), 0);
+            const max = ranked.length ? Math.max(1, ranked[0].count) : 1;
+            return (
+              <>
+                <div className="mt-5 flex items-baseline justify-between gap-2">
+                  <h3 className="flex items-center gap-2 text-[13px] font-semibold" style={{ color: "#e9edef" }}>
+                    <Zap size={14} style={{ color: "#00a884" }} /> Tool activity
+                  </h3>
+                  {total > 0 && (
+                    <p className="text-[11.5px] font-semibold" style={{ color: "#00a884" }}>
+                      {total.toLocaleString()} {total === 1 ? "call" : "calls"} this week
+                    </p>
+                  )}
+                </div>
+                {ranked.length === 0 ? (
+                  <p className="mt-2 text-[12px]" style={{ color: "#636c73" }}>No tool calls recorded yet in this window.</p>
+                ) : (
+                  <ul className="mt-2.5 flex flex-col gap-2">
+                    {ranked.map((t, i) => (
+                      <li key={`${t.name}-${i}`}>
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className="truncate text-[12.5px] font-medium capitalize" style={{ color: "#aebac1" }}>
+                            {prettyTool(t.name)}
+                          </span>
+                          <span className="shrink-0 text-[11.5px] font-bold tabular-nums" style={{ color: "#e9edef" }}>
+                            {t.count.toLocaleString()}
+                          </span>
+                        </div>
+                        <div className="mt-1 h-1 overflow-hidden rounded-full" style={{ background: "rgba(255,255,255,0.07)" }}>
+                          <div className="h-full rounded-full" style={{ width: `${Math.max(4, Math.round((t.count / max) * 100))}%`, background: "#00a884" }} />
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
+            );
+          })()}
         </div>
       </div>
 
