@@ -4,6 +4,49 @@ import { normalizeJid } from "./store.js";
 
 export const groupTools: ToolDefinition[] = [
   {
+    name: "list_groups",
+    description:
+      "List every WhatsApp group this account is in: name, JID, member count, and whether this account is an admin there. OWNER ONLY. Use when the owner asks what groups they have or which group to manage.",
+    scope: "owner",
+    parameters: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+    execute: async (_args, ctx) => {
+      if (!ctx.sock) return { error: "WhatsApp is not connected." };
+      try {
+        const { isSelfJid } = await import("./store.js");
+        const meUser = ctx.sock.user as unknown as
+          | { id?: string; lid?: string; phoneNumber?: string }
+          | null
+          | undefined;
+        const ownForms = [meUser?.id, meUser?.lid, meUser?.phoneNumber].filter(
+          (x): x is string => !!x,
+        );
+        const groups = await ctx.sock.groupFetchAllParticipating();
+        const rows = Object.entries(groups).map(([jid, meta]) => {
+          const participants = meta.participants ?? [];
+          const me = participants.find((p) => ownForms.some((s) => isSelfJid(p.id, s)));
+          const flag = (me as { admin?: string | null } | undefined)?.admin;
+          return {
+            groupJid: jid,
+            subject: meta.subject || "Group",
+            members: participants.length,
+            isAdmin: flag === "admin" || flag === "superadmin",
+          };
+        });
+        rows.sort((a, b) => {
+          if (a.isAdmin !== b.isAdmin) return a.isAdmin ? -1 : 1;
+          return a.subject.localeCompare(b.subject);
+        });
+        return { groups: rows, count: rows.length };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : "Group list failed." };
+      }
+    },
+  },
+  {
     name: "get_group_info",
     description:
       "Get a WhatsApp group's subject, description, and participant list with admin flags. OWNER ONLY.",
