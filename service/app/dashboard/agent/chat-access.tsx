@@ -27,8 +27,8 @@ function timeAgo(ts: number): string {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
-function shortJid(jid: string): string {
-  const user = jid.split("@")[0];
+function shortJid(jid: string | null | undefined): string {
+  const user = (jid ?? "").split("@")[0];
   return user.length > 16 ? `${user.slice(0, 16)}…` : user;
 }
 
@@ -80,14 +80,33 @@ export default function ChatAccess() {
       if (accessRes.ok) {
         const data = await accessRes.json();
         setMode(data.mode ?? "open");
-        setRules(data.rules ?? []);
+        // Coerce: a legacy rule doc can miss fields — nulls must not crash the list.
+        const rawRules = Array.isArray(data.rules) ? data.rules : [];
+        setRules(
+          rawRules.map((r: { id?: unknown; jid?: unknown; name?: unknown; list?: unknown }, i: number) => ({
+            id: String(r?.id ?? `rule-${i}`),
+            jid: String(r?.jid ?? ""),
+            name: String(r?.name ?? "Unknown"),
+            list: r?.list === "white" ? ("white" as const) : ("black" as const),
+          })),
+        );
       } else {
         const data = await accessRes.json().catch(() => ({}));
         setActionError(data.error ?? "Could not load block/allow rules (is MongoDB running?).");
       }
       if (chatsRes && chatsRes.ok) {
         const data = await chatsRes.json();
-        setChats(data.chats ?? []);
+        const rawChats = Array.isArray(data.chats) ? data.chats : [];
+        setChats(
+          rawChats.map((c: { jid?: unknown; name?: unknown; lastSeen?: unknown; messages?: unknown; imgUrl?: unknown; about?: unknown }) => ({
+            jid: String(c?.jid ?? ""),
+            name: String(c?.name ?? "Unknown"),
+            lastSeen: Number(c?.lastSeen ?? 0),
+            messages: Number(c?.messages ?? 0),
+            imgUrl: typeof c?.imgUrl === "string" ? c.imgUrl : null,
+            about: typeof c?.about === "string" ? c.about : "",
+          })),
+        );
         setAgentUp(true);
       } else {
         setAgentUp(false);
@@ -198,11 +217,11 @@ export default function ChatAccess() {
   const [filter, setFilter] = useState("");
   const q = filter.trim().toLowerCase();
   const rows: (Chat & { rule: Rule | null; isGroup: boolean })[] = [
-    ...chats.map((c) => ({ ...c, rule: ruleByJid.get(c.jid) ?? null, isGroup: c.jid.endsWith("@g.us") })),
+    ...chats.map((c) => ({ ...c, rule: ruleByJid.get(c.jid) ?? null, isGroup: (c.jid ?? "").endsWith("@g.us") })),
     ...rules
       .filter((r) => !chats.some((c) => c.jid === r.jid))
-      .map((r) => ({ jid: r.jid, name: r.name, lastSeen: 0, messages: 0, rule: r, isGroup: r.jid.endsWith("@g.us") })),
-  ].filter((r) => !q || r.name.toLowerCase().includes(q) || shortJid(r.jid).toLowerCase().includes(q));
+      .map((r) => ({ jid: r.jid, name: r.name, lastSeen: 0, messages: 0, rule: r, isGroup: (r.jid ?? "").endsWith("@g.us") })),
+  ].filter((r) => !q || (r.name ?? "").toLowerCase().includes(q) || shortJid(r.jid).toLowerCase().includes(q));
 
   return (
     <div className="flex flex-col gap-3.5">

@@ -265,8 +265,27 @@ app.get("/sessions/:userId/qr", (c) => {
     userId,
     status: session.status,
     qr: session.qr,
+    pairingCode: session.pairingCode,
     connected: session.isConnected(),
   });
+});
+
+// 8-char code typed into WhatsApp on the phone itself (same-phone linking:
+// Settings → Linked devices → Link a device → "Link with phone number
+// instead"). Body: { phoneNumber: "2348012345678" }. Start the session first
+// (or it starts here), then POST this — the code shows on the Link page.
+app.post("/sessions/:userId/pairing-code", async (c) => {
+  const userId = c.req.param("userId");
+  const body = (await c.req.json<{ phoneNumber?: string }>().catch(() => ({}) as { phoneNumber?: string }));
+  const phoneNumber = String(body.phoneNumber ?? "").trim();
+  if (!phoneNumber) return c.json({ error: "`phoneNumber` is required (e.g. 2348012345678)" }, 400);
+  try {
+    const session = sessions.ensureSession(userId);
+    const code = await session.requestPairingCode(phoneNumber);
+    return c.json({ userId, pairingCode: code, status: session.status, connected: session.isConnected() });
+  } catch (e) {
+    return c.json({ userId, error: e instanceof Error ? e.message : "pairing failed" }, 500);
+  }
 });
 
 // Activate the agent for a group: persona + rhythm + first recurring job, one call.

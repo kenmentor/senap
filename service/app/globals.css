@@ -25,6 +25,7 @@
 html {
   scroll-behavior: smooth;
   overflow-x: clip;
+  -webkit-tap-highlight-color: transparent;
 }
 
 body {
@@ -33,6 +34,22 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  overscroll-behavior-y: none;
+}
+
+/* Instant-feeling taps, no double-tap zoom on controls */
+button,
+a {
+  touch-action: manipulation;
+}
+
+/* iOS zooms any <input> under 16px on focus — keep dashboard native */
+@media (max-width: 768px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
 }
 
 .font-display {

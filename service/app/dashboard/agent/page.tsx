@@ -190,27 +190,30 @@ export default function AgentPage() {
     avatarColor?: string; avatarInk?: string; personality?: string; greeting?: string; acts?: string;
     neverDo?: string; exCustomer?: string; exReply?: string; days?: string[]; open?: string; close?: string;
   }) => {
-    if (c.empId) {
-      setEmpId(c.empId);
+    // Coerce: server/DB can hand back nulls for any of these — one null must
+    // never poison state and crash the page later.
+    const str = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : fallback);
+    if (str(c.empId)) {
+      setEmpId(c.empId as string);
       const i = EMPLOYEES.findIndex((e) => e.id === c.empId);
       if (i >= 0) setIndex(i);
     }
-    if (c.activeEmp) setActiveId(c.activeEmp);
-    if (c.name !== undefined) setName(c.name);
-    if (c.role !== undefined) setRole(c.role);
-    if (c.avatar) setAvatar(c.avatar);
-    if (c.photo !== undefined) setPhoto(c.photo);
-    if (c.avatarColor) setAvatarColor(c.avatarColor);
-    if (c.avatarInk) setAvatarInk(c.avatarInk);
-    if (c.personality) setPersonality(c.personality);
-    if (c.greeting !== undefined) setGreeting(c.greeting);
-    if (c.acts !== undefined) setActs(c.acts);
-    if (c.neverDo !== undefined) setNeverDo(c.neverDo);
-    if (c.exCustomer !== undefined) setExCustomer(c.exCustomer);
-    if (c.exReply !== undefined) setExReply(c.exReply);
-    if (Array.isArray(c.days) && c.days.length) setDays(c.days);
-    if (c.open) setOpen(c.open);
-    if (c.close) setClose(c.close);
+    if (str(c.activeEmp)) setActiveId(c.activeEmp as string);
+    if (c.name !== undefined) setName(str(c.name));
+    if (c.role !== undefined) setRole(str(c.role));
+    if (str(c.avatar)) setAvatar(c.avatar as string);
+    if (c.photo !== undefined) setPhoto(str(c.photo));
+    if (str(c.avatarColor)) setAvatarColor(c.avatarColor as string);
+    if (str(c.avatarInk)) setAvatarInk(c.avatarInk as string);
+    if (str(c.personality)) setPersonality(c.personality as string);
+    if (c.greeting !== undefined) setGreeting(str(c.greeting));
+    if (c.acts !== undefined) setActs(str(c.acts));
+    if (c.neverDo !== undefined) setNeverDo(str(c.neverDo));
+    if (c.exCustomer !== undefined) setExCustomer(str(c.exCustomer));
+    if (c.exReply !== undefined) setExReply(str(c.exReply));
+    if (Array.isArray(c.days) && c.days.length) setDays(c.days.filter((d) => typeof d === "string"));
+    if (str(c.open)) setOpen(c.open as string);
+    if (str(c.close)) setClose(c.close as string);
   };
 
   useEffect(() => {

@@ -325,10 +325,10 @@ export default function SettingsPage() {
             {team.map((m, i) => (
               <div key={i} className="flex items-center gap-3 rounded-xl p-3" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>
                 <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[11.5px] font-bold" style={{ background: "rgba(255,255,255,0.08)", color: "#cfd6db" }}>
-                  {m.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()}
+                  {(m.name || "").split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()}
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-[13.5px] font-medium" style={{ color: "#e9edef" }}>{m.name}</p>
+                  <p className="truncate text-[13.5px] font-medium" style={{ color: "#e9edef" }}>{m.name || "Unknown"}</p>
                   <p className="text-[12px]" style={{ color: "#636c73" }}>{m.role} · {m.access}</p>
                 </div>
                 <button onClick={() => setTeam((t) => t.filter((_, j) => j !== i))} className="shrink-0 text-[12.5px] font-medium" style={{ color: "#e66a6a" }}>

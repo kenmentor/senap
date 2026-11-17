@@ -12,9 +12,9 @@ type ToolUse = { name: string; count: number };
 type StatCard = { label: string; value: string; delta: string };
 type TrafficPoint = { day: string; messages: number };
 
-function hueOf(s: string): number {
+function hueOf(s: string | null | undefined): number {
   let h = 11;
-  for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 9973;
+  for (const c of (s ?? "")) h = (h * 31 + c.charCodeAt(0)) % 9973;
   return h % 360;
 }
 
@@ -42,10 +42,11 @@ function dueIn(iso: string): string {
   return `in ${Math.floor(h / 24)}d`;
 }
 
-function ChatAvatar({ jid, name, imgUrl }: { jid: string; name: string; imgUrl?: string | null }) {
+function ChatAvatar({ jid, name, imgUrl }: { jid: string | null | undefined; name: string | null | undefined; imgUrl?: string | null }) {
   const [broken, setBroken] = useState(false);
-  const hue = hueOf(jid);
-  const initials = name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase() || "?";
+  const hue = hueOf(jid ?? "");
+  const safeName = name ?? "unknown";
+  const initials = safeName.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase() || "?";
   const showPhoto = !!imgUrl && imgUrl.startsWith("http") && !broken;
   return (
     <span
@@ -101,9 +102,39 @@ export default function DashboardHome() {
       const res = await fetch("/api/activity", { cache: "no-store" });
       if (!res.ok) return;
       const data = await res.json();
-      setChats(Array.isArray(data.chats) ? data.chats : []);
-      setScheduled(Array.isArray(data.scheduled) ? data.scheduled : []);
-      setTools(Array.isArray(data.tools) ? data.tools : []);
+      // Coerce: the agent/DB can hand back rows with null fields (unknown
+      // contact, legacy job doc) — one null must never crash the whole page.
+      const rawChats = Array.isArray(data.chats) ? data.chats : [];
+      setChats(
+        rawChats.map((c: { userId?: unknown; jid?: unknown; name?: unknown; imgUrl?: unknown; text?: unknown; fromMe?: unknown; ts?: unknown; messages?: unknown }) => ({
+          userId: String(c?.userId ?? ""),
+          jid: String(c?.jid ?? ""),
+          name: String(c?.name ?? "unknown"),
+          imgUrl: typeof c?.imgUrl === "string" ? c.imgUrl : null,
+          text: String(c?.text ?? ""),
+          fromMe: c?.fromMe === true,
+          ts: Number(c?.ts ?? 0),
+          messages: Number(c?.messages ?? 0),
+        })),
+      );
+      const rawScheduled = Array.isArray(data.scheduled) ? data.scheduled : [];
+      setScheduled(
+        rawScheduled.map((j: { id?: unknown; userId?: unknown; chat?: unknown; kind?: unknown; text?: unknown; runAt?: unknown }) => ({
+          id: String(j?.id ?? `job-${Math.random().toString(36).slice(2)}`),
+          userId: String(j?.userId ?? ""),
+          chat: String(j?.chat ?? ""),
+          kind: String(j?.kind ?? "send"),
+          text: String(j?.text ?? ""),
+          runAt: String(j?.runAt ?? ""),
+        })),
+      );
+      const rawTools = Array.isArray(data.tools) ? data.tools : [];
+      setTools(
+        rawTools.map((t: { name?: unknown; count?: unknown }) => ({
+          name: String(t?.name ?? "unknown"),
+          count: Number(t?.count ?? 0),
+        })),
+      );
       setAgentOnline(data.agentOnline !== false);
       if (Array.isArray(data.stats)) setStats(data.stats);
       if (Array.isArray(data.traffic)) setTraffic(data.traffic);
@@ -188,27 +219,28 @@ export default function DashboardHome() {
         <button
           onClick={refresh}
           disabled={refreshing}
-          className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-[12.5px] font-semibold disabled:opacity-50"
+          className="flex min-h-[44px] items-center gap-1.5 rounded-lg px-3.5 py-2 text-[12.5px] font-semibold transition active:scale-95 disabled:opacity-50"
           style={{ background: "rgba(255,255,255,0.06)", color: "#e9edef", border: "1px solid rgba(255,255,255,0.1)" }}
         >
           <RefreshCw size={14} className={refreshing ? "animate-spin" : ""} /> {refreshing ? "Refreshing…" : "Refresh"}
         </button>
       </div>
-      {/* 3 stats — live from /api/activity, fallback while offline */}
-      <div className="grid gap-3.5 sm:grid-cols-3">
+      {/* 3 stats — live from /api/activity, fallback while offline.
+          Compact 3-across row on phones (native dashboard feel), roomy cards on desktop. */}
+      <div className="grid grid-cols-3 gap-2 sm:gap-3.5">
         {liveStats.map((s) => (
-          <div key={s.label} className="rounded-2xl p-5" style={{ border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.025)" }}>
-            <p className="text-[11px] font-semibold uppercase" style={{ color: "#636c73", letterSpacing: "0.1em" }}>{s.label}</p>
-            <p className="font-display mt-1.5 text-[32px] font-bold leading-none" style={{ color: "#e9edef" }}>{s.value}</p>
-            <p className="mt-2 text-[12px] font-medium" style={{ color: "#00a884" }}>{s.delta}</p>
+          <div key={s.label} className="rounded-2xl p-3 sm:p-5" style={{ border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.025)" }}>
+            <p className="truncate text-[10px] font-semibold uppercase sm:text-[11px]" style={{ color: "#636c73", letterSpacing: "0.08em" }}>{s.label}</p>
+            <p className="font-display mt-1 text-[22px] font-bold leading-none sm:mt-1.5 sm:text-[32px]" style={{ color: "#e9edef" }}>{s.value}</p>
+            <p className="mt-1.5 truncate text-[11px] font-medium sm:mt-2 sm:text-[12px]" style={{ color: "#00a884" }}>{s.delta}</p>
           </div>
         ))}
       </div>
 
       {/* Recent chats + operator tasks */}
-      <div className="mt-3.5 grid gap-3.5 lg:grid-cols-2">
+      <div className="mt-2.5 grid gap-2.5 sm:mt-3.5 sm:gap-3.5 lg:grid-cols-2">
         {/* Recent chats — WhatsApp style: avatar, name, last message */}
-        <div className="rounded-2xl p-5 sm:p-6" style={{ border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.025)" }}>
+        <div className="rounded-2xl p-4 sm:p-6" style={{ border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.025)" }}>
           <div className="flex items-center justify-between gap-2">
             <h2 className="flex items-center gap-2 text-[15px] font-semibold" style={{ color: "#e9edef" }}>
               <MessageCircle size={16} style={{ color: "#00a884" }} /> Recent chats
@@ -229,7 +261,7 @@ export default function DashboardHome() {
             <ul className="mt-2 flex flex-col">
               {chats.slice(0, 6).map((c) => (
                 <li key={`${c.userId}:${c.jid}`}>
-                  <Link href={`/dashboard/agent?account=${encodeURIComponent(c.userId)}`} className="flex items-center gap-3 rounded-xl px-2 py-2.5 transition hover:bg-white/[0.04]">
+                    <Link href={`/dashboard/agent?account=${encodeURIComponent(c.userId)}`} className="flex min-h-[60px] items-center gap-3 rounded-xl px-2 py-2.5 transition hover:bg-white/[0.04] active:bg-white/[0.06]">
                     <ChatAvatar jid={c.jid} name={c.name} imgUrl={c.imgUrl} />
                     <span className="min-w-0 flex-1">
                       <span className="flex items-baseline justify-between gap-2">
@@ -248,7 +280,7 @@ export default function DashboardHome() {
         </div>
 
         {/* Scheduled for the operator — fulfillments, follow-ups, promos */}
-        <div className="rounded-2xl p-5 sm:p-6" style={{ border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.025)" }}>
+        <div className="rounded-2xl p-4 sm:p-6" style={{ border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.025)" }}>
           <div className="flex items-center justify-between gap-2">
             <h2 className="flex items-center gap-2 text-[15px] font-semibold" style={{ color: "#e9edef" }}>
               <Clock3 size={16} style={{ color: "#00a884" }} /> Lined up for you
@@ -271,7 +303,7 @@ export default function DashboardHome() {
                       {j.kind === "agent" ? "She composes it fresh" : "Sends as-is"} · {j.chat.split("@")[0]} · {dueIn(j.runAt)}
                     </span>
                   </span>
-                  <button onClick={() => cancelJob(j.id)} aria-label="Cancel task" title="Cancel" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition hover:bg-white/10" style={{ color: "#636c73" }}>
+                  <button onClick={() => cancelJob(j.id)} aria-label="Cancel task" title="Cancel" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition hover:bg-white/10 active:bg-white/15 sm:h-8 sm:w-8" style={{ color: "#636c73" }}>
                     <X size={14} />
                   </button>
                 </li>
@@ -298,7 +330,7 @@ export default function DashboardHome() {
       </div>
 
       {/* Traffic graph + cost consumed */}
-      <div className="mt-3.5 rounded-2xl p-5 sm:p-6" style={{ border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.025)" }}>
+      <div className="mt-2.5 rounded-2xl p-4 sm:mt-3.5 sm:p-6" style={{ border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.025)" }}>
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <div>
             <h2 className="text-[15px] font-semibold" style={{ color: "#e9edef" }}>Traffic</h2>
@@ -309,7 +341,7 @@ export default function DashboardHome() {
           </p>
         </div>
 
-        <div className="mt-4 h-[240px] w-full">
+        <div className="mt-4 h-[200px] w-full sm:h-[240px]">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={liveTraffic} margin={{ top: 4, right: 4, bottom: 0, left: -18 }}>
               <defs>
@@ -341,7 +373,7 @@ export default function DashboardHome() {
       </div>
 
       {/* Urgent restocks */}
-      <div className="mt-3.5 rounded-2xl p-5 sm:p-6" style={{ border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.025)" }}>
+      <div className="mt-2.5 rounded-2xl p-4 sm:mt-3.5 sm:p-6" style={{ border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.025)" }}>
         <div className="flex items-baseline justify-between gap-2">
           <div className="flex items-center gap-2.5">
             <h2 className="text-[15px] font-semibold" style={{ color: "#e9edef" }}>Urgent restocks</h2>
@@ -382,13 +414,14 @@ export default function DashboardHome() {
         ) : (
           <div className="mt-4 flex flex-col">
             {urgent.map((p) => (
-              <div key={p.id} className="flex items-center gap-3.5 py-3" style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+              <div key={p.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-3" style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={p.image || thumbFor(p, 0)} alt="" draggable={false} className="h-11 w-11 shrink-0 rounded-xl object-cover" style={{ border: "1px solid rgba(255,255,255,0.1)" }} />
-                <div className="min-w-0 flex-1">
+                <div className="min-w-0 flex-1 basis-40">
                   <p className="truncate text-[13.5px] font-medium" style={{ color: "#e9edef" }}>{p.name}</p>
                   <p className="mt-0.5 text-[11.5px]" style={{ color: "#8a949b" }}>
-                    <span style={lowCount}>{p.quantity} left</span> · {p.sold} sold · Updated {formatUpdated(p.updatedAt)}
+                    <span style={lowCount}>{p.quantity} left</span>
+                    <span className="hidden sm:inline"> · {p.sold} sold · Updated {formatUpdated(p.updatedAt)}</span>
                   </p>
                 </div>
                 <span className="hidden rounded-full px-2.5 py-1 text-[10.5px] font-semibold sm:inline" style={{ background: statusOf(p).bg, color: statusOf(p).color }}>
@@ -396,7 +429,7 @@ export default function DashboardHome() {
                 </span>
                 <button
                   onClick={() => restock(p.id)}
-                  className="flex shrink-0 items-center gap-1.5 rounded-lg px-3.5 py-2 text-[12.5px] font-semibold"
+                  className="flex min-h-[44px] shrink-0 items-center gap-1.5 rounded-lg px-4 py-2 text-[12.5px] font-semibold transition active:scale-95"
                   style={{ background: "#00a884", color: "#04241d" }}
                 >
                   <Plus size={14} strokeWidth={2.5} /> Restock

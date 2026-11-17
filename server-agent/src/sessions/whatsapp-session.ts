@@ -168,6 +168,8 @@ export class WhatsappSession {
   sock: ReturnType<typeof makeWASocket> | null = null;
   status: SessionStatus = "idle";
   qr: string | null = null;
+  /** 8-char code from requestPairingCode (typed into WhatsApp on the phone). */
+  pairingCode: string | null = null;
   lastError: string | null = null;
   private histories = new Map<string, ConversationHistory>();
   private contacts = new Map<string, KnownContact>();
@@ -873,12 +875,55 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
     }
   }
 
+  /**
+   * Pairing-code linking for phones that can't scan their own screen (the
+   * dashboard is open on the same phone as WhatsApp). The user types the
+   * returned 8-char code into WhatsApp via: Settings → Linked devices →
+   * Link a device → "Link with phone number instead".
+   *
+   * The socket must be dialled but NOT yet registered — call after /start,
+   * before the account connects. Throws when already connected/registered.
+   */
+  async requestPairingCode(phoneNumber: string): Promise<string> {
+    const digits = phoneNumber.replace(/\D/g, "");
+    if (digits.length < 8 || digits.length > 15) {
+      throw new Error("Enter the full phone number in international format (e.g. 2348012345678).");
+    }
+    if (this.status === "open" || this.isConnected()) {
+      throw new Error("This line is already connected — no code needed.");
+    }
+    // Ensure a live (unregistered) socket exists to ask for the code.
+    if (!this.sock || this.status === "idle" || this.status === "closed") {
+      await this.connectToWhatsApp(this.userId);
+    }
+    // Wait briefly for the socket to exist (start returns on qr/open).
+    const deadline = Date.now() + 30_000;
+    while (!this.sock && Date.now() < deadline) {
+      if (this.stopped) throw new Error("Session was stopped.");
+      await sleep(300);
+    }
+    const sock = this.sock;
+    if (!sock) throw new Error("Could not open a session — try again.");
+    try {
+      const code = await sock.requestPairingCode(digits);
+      this.pairingCode = code;
+      return code;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/already|registered|exists/i.test(msg)) {
+        throw new Error("This number is already registered — scan the QR instead, or delete and re-link.");
+      }
+      throw new Error(`WhatsApp rejected the number (${msg}). Check the country code and try again.`);
+    }
+  }
+
   async stop(): Promise<void> {
     // Bump the generation first: any in-flight connect or pending reconnect
     // timer from before this stop is now stale and must stand down.
     this.epoch += 1;
     this.stopped = true;
     this.qr = null;
+    this.pairingCode = null;
     // Free RAM when not in use: drop all per-chat state. It reseeds from
     // WhatsApp sync + Mongo on next start, so stopping is a real memory reset.
     this.histories.clear();
@@ -936,6 +981,7 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
       status: this.status,
       connected: this.isConnected(),
       hasQr: this.qr !== null,
+      pairingCode: this.pairingCode,
       lastError: this.lastError,
       me: this.sock?.user?.id ?? null,
     };
@@ -1486,6 +1532,7 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
           if (mine) {
             this.status = "logged_out";
             this.qr = null;
+            this.pairingCode = null;
             this.sock = null;
             this.histories.clear();
           }
@@ -1547,6 +1594,7 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
       } else if (connection === "open") {
         if (epoch !== this.epoch || this.sock !== sock) return;
         this.qr = null;
+        this.pairingCode = null;
         this.status = "open";
         this.reconnectFailures = 0;
         console.log(`Session ${this.userId} opened connection`);

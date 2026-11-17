@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import QRCode from "react-qr-code";
-import { Plus, RefreshCw, X, Unplug, Trash2, PlugZap, Check, Smartphone, ShieldCheck, QrCode, ArrowRight } from "lucide-react";
+import { Plus, RefreshCw, X, Unplug, Trash2, PlugZap, Check, Smartphone, ShieldCheck, QrCode, ArrowRight, Copy, KeyRound } from "lucide-react";
 import ConfirmDialog from "@/components/ui/confirm-dialog";
 import ContactAccessTable from "@/components/ui/contact-access-table";
 
@@ -90,6 +90,8 @@ function WhatsAppAvatar({ engineId, meJid, number, name }: { engineId: string; m
 
 const QR_STEPS = ["Open WhatsApp on your phone", "Go to Settings → Linked devices", "Tap Link a device", "Point your phone at the code above"];
 
+const CODE_STEPS = ["Enter the WhatsApp number below, with country code", "Tap Get code — an 8-character code appears", "On your phone: WhatsApp → Settings → Linked devices", "Tap Link a device → “Link with phone number instead”", "Type in the code — your agent connects by itself"];
+
 function Steps({ items }: { items: string[] }) {
   return (
     <ol className="mt-4 w-full rounded-2xl p-4" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>
@@ -116,6 +118,13 @@ export default function LinkPage() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [qr, setQr] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** QR vs pairing-code linking (code = for the same phone — no camera scan). */
+  const [linkMode, setLinkMode] = useState<"qr" | "code">("qr");
+  const [phone, setPhone] = useState("");
+  const [pairCode, setPairCode] = useState<string | null>(null);
+  const [pairBusy, setPairBusy] = useState(false);
+  const [pairError, setPairError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const [engineStates, setEngineStates] = useState<Record<string, EngineState>>({});
   const [agentOnline, setAgentOnline] = useState(true);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -149,6 +158,11 @@ export default function LinkPage() {
     setPhase("idle");
     setQr(null);
     setError(null);
+    setLinkMode("qr");
+    setPhone("");
+    setPairCode(null);
+    setPairError(null);
+    setCopied(false);
     setActionError(null);
     setPickerOpen(true);
   };
@@ -273,7 +287,109 @@ export default function LinkPage() {
     setPhase("idle");
     setQr(null);
     setError(null);
+    setLinkMode("qr");
+    setPhone("");
+    setPairCode(null);
+    setPairError(null);
+    setCopied(false);
     setActionError(null);
+  };
+
+  /** Watch a starting session until WhatsApp confirms the link (code mode). */
+  const pollForConnection = (id: string) => {
+    stopPolling();
+    pollRef.current = window.setInterval(async () => {
+      try {
+        const res = await fetch(`/api/agent/sessions/${encodeURIComponent(id)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.connected) {
+          setPhase("connected");
+          stopPolling();
+        }
+      } catch {
+        /* keep polling — the code stays valid for a while */
+      }
+    }, 2500);
+  };
+
+  /** Switch QR ⇄ code: stop whatever the other mode was polling. */
+  const switchMode = (m: "qr" | "code") => {
+    if (m === linkMode) return;
+    stopPolling();
+    setLinkMode(m);
+    if (phase !== "connected") {
+      setPhase("idle");
+      setQr(null);
+      setError(null);
+      setPairCode(null);
+      setPairError(null);
+      setCopied(false);
+    }
+  };
+
+  /**
+   * Same-phone linking: no camera needed. Starts the session, asks WhatsApp
+   * for an 8-character code for this number, and shows it to type into
+   * WhatsApp → Linked devices → “Link with phone number instead”.
+   */
+  const requestPairCode = async () => {
+    const id = userId.trim();
+    const digits = phone.replace(/\D/g, "");
+    if (!id) {
+      setPairError("Enter a device name first.");
+      return;
+    }
+    if (digits.length < 8 || digits.length > 15) {
+      setPairError("Enter the full WhatsApp number with country code (e.g. 2348012345678).");
+      return;
+    }
+    if (relinkTarget === null && accounts.some((a) => engineIdOf(a).toLowerCase() === id.toLowerCase())) {
+      setPairError(`"${id}" is already linked — pick a different device name.`);
+      return;
+    }
+    stopPolling();
+    setPairBusy(true);
+    setPairError(null);
+    setPairCode(null);
+    setCopied(false);
+    try {
+      const startRes = await fetch(`/api/agent/sessions/${encodeURIComponent(id)}/start`, { method: "POST" });
+      if (!startRes.ok) {
+        const body = await startRes.json().catch(() => ({}));
+        throw new Error(body.error ?? `Start failed (${startRes.status})`);
+      }
+      const res = await fetch(`/api/agent/sessions/${encodeURIComponent(id)}/pairing-code`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phoneNumber: digits }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? `Code request failed (${res.status})`);
+      if (data.connected) {
+        setPhase("connected");
+      } else {
+        setPairCode(data.pairingCode ?? null);
+        if (!data.pairingCode) throw new Error("WhatsApp didn't return a code — try again.");
+        setPhase("qr"); // “waiting” — the code panel shows the code + waiting note
+        pollForConnection(id);
+      }
+    } catch (e) {
+      setPairError(e instanceof Error ? e.message : "Could not get a code — is the agent running on :3001?");
+    } finally {
+      setPairBusy(false);
+    }
+  };
+
+  const copyCode = async () => {
+    if (!pairCode) return;
+    try {
+      await navigator.clipboard.writeText(pairCode);
+    } catch {
+      /* clipboard blocked — user can read it off the screen */
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 2000);
   };
 
   const confirmLinked = async () => {
@@ -319,16 +435,23 @@ export default function LinkPage() {
       if (accessRes.ok) {
         const data = await accessRes.json();
         setFreshMode(data.mode ?? "open");
-        setFreshRules(data.rules ?? []);
+        const rawRules = Array.isArray(data.rules) ? data.rules : [];
+        setFreshRules(
+          rawRules.map((r: { jid?: unknown; name?: unknown; list?: unknown }) => ({
+            jid: String(r?.jid ?? ""),
+            name: String(r?.name ?? "Unknown"),
+            list: r?.list === "white" ? ("white" as const) : ("black" as const),
+          })),
+        );
       }
       if (chatsRes && chatsRes.ok) {
         const data = await chatsRes.json();
-        type FreshChat = { jid: string; name: string; imgUrl?: string | null; about?: string };
-        const list: FreshChat[] = (data.chats ?? []).map((c: FreshChat) => ({
-          jid: c.jid,
-          name: c.name,
-          imgUrl: c.imgUrl ?? null,
-          about: c.about ?? "",
+        type FreshChat = { jid?: unknown; name?: unknown; imgUrl?: unknown; about?: unknown };
+        const list: { jid: string; name: string; imgUrl?: string | null; about?: string }[] = ((data.chats ?? []) as FreshChat[]).map((c) => ({
+          jid: String(c?.jid ?? ""),
+          name: String(c?.name ?? "Unknown"),
+          imgUrl: typeof c?.imgUrl === "string" ? c.imgUrl : null,
+          about: typeof c?.about === "string" ? c.about : "",
         }));
         setFreshChats(list);
         setFreshAgentDown(false);
@@ -432,6 +555,11 @@ export default function LinkPage() {
     setPhase("idle");
     setQr(null);
     setError(null);
+    setLinkMode("qr");
+    setPhone("");
+    setPairCode(null);
+    setPairError(null);
+    setCopied(false);
     setPickerOpen(true);
   };
 
@@ -524,10 +652,10 @@ export default function LinkPage() {
       {/* Link sheet */}
       {pickerOpen && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-0 sm:items-center sm:p-6" onClick={closeSheet}>
-          <div className="w-full max-w-[400px] rounded-t-3xl p-6 sm:rounded-3xl" style={{ background: "#111b21", border: "1px solid rgba(255,255,255,0.1)" }} onClick={(e) => e.stopPropagation()}>
+          <div className="max-h-[92dvh] w-full max-w-[400px] overflow-y-auto rounded-t-3xl p-6 sm:rounded-3xl" style={{ background: "#111b21", border: "1px solid rgba(255,255,255,0.1)", paddingBottom: "calc(1.5rem + env(safe-area-inset-bottom))" }} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <h2 className="text-[16px] font-semibold" style={{ color: "#e9edef" }}>Link WhatsApp</h2>
-              <button onClick={closeSheet} aria-label="Close" style={{ color: "#636c73" }}><X size={17} /></button>
+              <button onClick={closeSheet} aria-label="Close" className="flex h-10 w-10 items-center justify-center rounded-full transition active:bg-white/10" style={{ color: "#636c73" }}><X size={17} /></button>
             </div>
 
             <label className="mt-4 block text-[12px] font-medium" style={{ color: "#8a949b" }}>
@@ -544,47 +672,134 @@ export default function LinkPage() {
               </span>
             </label>
 
-            <div className="mt-5 flex flex-col items-center">
+            {/* QR ⇄ code switch — codes are for the same phone (no camera scan). */}
+            {phase !== "connected" && (
+              <div className="mt-4 grid grid-cols-2 gap-1 rounded-xl p-1" style={{ background: "rgba(255,255,255,0.04)" }}>
+                {(
+                  [
+                    ["qr", "Scan QR", QrCode],
+                    ["code", "Use code", KeyRound],
+                  ] as const
+                ).map(([m, label, Icon]) => (
+                  <button
+                    key={m}
+                    onClick={() => switchMode(m)}
+                    className="flex min-h-[44px] items-center justify-center gap-1.5 rounded-lg px-3 text-[13px] font-semibold transition active:scale-[0.98]"
+                    style={linkMode === m ? { background: "rgba(0,168,132,0.16)", color: "#00d19f" } : { color: "#8a949b" }}
+                  >
+                    <Icon size={15} strokeWidth={2} /> {label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {phase !== "connected" && linkMode === "code" && (
+              <p className="mt-2.5 rounded-xl p-3 text-center text-[12px] leading-snug" style={{ background: "rgba(0,168,132,0.07)", color: "#aebac1", border: "1px solid rgba(0,168,132,0.22)" }}>
+                Same phone as WhatsApp? Stay on this tab — a QR can&apos;t be scanned from its own screen.
+              </p>
+            )}
+
+            <div className="mt-4 flex flex-col items-center">
               {phase === "connected" ? (
                 <div className="flex w-full flex-col items-center rounded-2xl py-8" style={{ background: "rgba(0,168,132,0.08)", border: "1px solid rgba(0,168,132,0.35)" }}>
                   <span className="flex h-14 w-14 items-center justify-center rounded-full" style={{ background: "#00a884", color: "#04241d" }}><Check size={28} strokeWidth={3} /></span>
                   <p className="mt-3 text-[14px] font-semibold" style={{ color: "#e9edef" }}>Device connected</p>
                   <p className="mt-1 text-[12px]" style={{ color: "#8a949b" }}>Your agent is now answering this number.</p>
                 </div>
-              ) : qr ? (
-                <div className="rounded-2xl bg-white p-3">
-                  <QRCode value={qr} size={216} />
-                </div>
+              ) : linkMode === "code" ? (
+                <>
+                  <label className="block w-full text-[12px] font-medium" style={{ color: "#8a949b" }}>
+                    WhatsApp number (with country code)
+                    <input
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value.replace(/[^\d+ ]/g, ""))}
+                      placeholder="e.g. 2348012345678"
+                      inputMode="tel"
+                      autoComplete="tel"
+                      className="mt-1.5 w-full rounded-xl px-3.5 text-[15px] outline-none"
+                      style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", color: "#e9edef", height: 48 }}
+                    />
+                  </label>
+                  {pairCode ? (
+                    <button
+                      onClick={copyCode}
+                      title="Tap to copy"
+                      className="mt-3.5 flex w-full items-center justify-center gap-2.5 rounded-2xl py-5 transition active:scale-[0.99]"
+                      style={{ background: "rgba(0,168,132,0.08)", border: "1px dashed rgba(0,168,132,0.5)" }}
+                    >
+                      <span className="font-mono text-[30px] font-bold tracking-[0.18em]" style={{ color: "#00d19f" }}>
+                        {pairCode.includes("-") || pairCode.length !== 8 ? pairCode : `${pairCode.slice(0, 4)}–${pairCode.slice(4)}`}
+                      </span>
+                      {copied ? <Check size={17} strokeWidth={2.5} style={{ color: "#00d19f" }} /> : <Copy size={17} style={{ color: "#636c73" }} />}
+                    </button>
+                  ) : (
+                    <div className="mt-3.5 flex w-full items-center justify-center rounded-2xl bg-white/5" style={{ minHeight: 118, border: "1px dashed rgba(255,255,255,0.15)" }}>
+                      <p className="px-8 text-center text-[12.5px]" style={{ color: "#636c73" }}>
+                        {pairBusy ? "Asking WhatsApp for your code…" : "Enter your number above, then tap Get code."}
+                      </p>
+                    </div>
+                  )}
+
+                  {pairError && <p className="mt-2.5 text-center text-[12px]" style={{ color: "#e66a6a" }}>{pairError}</p>}
+                  {actionError && <p className="mt-2.5 text-center text-[12px]" style={{ color: "#e66a6a" }}>{actionError}</p>}
+                  {pairCode && !pairError && <p className="mt-2.5 text-[11.5px]" style={{ color: "#636c73" }}>Type it into WhatsApp now — codes expire fast, request a new one if rejected</p>}
+
+                  <Steps items={CODE_STEPS} />
+                </>
               ) : (
-                <div className="flex items-center justify-center rounded-2xl bg-white/5" style={{ width: 240, height: 240, border: "1px dashed rgba(255,255,255,0.15)" }}>
-                  <p className="px-8 text-center text-[12.5px]" style={{ color: "#636c73" }}>
-                    {phase === "starting" ? "Starting engine…" : phase === "error" ? "Something went wrong." : "Press Start, then scan the code with WhatsApp."}
-                  </p>
-                </div>
+                <>
+                  {qr ? (
+                    <div className="rounded-2xl bg-white p-3">
+                      <QRCode value={qr} size={216} />
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-center rounded-2xl bg-white/5" style={{ width: 240, height: 240, border: "1px dashed rgba(255,255,255,0.15)" }}>
+                      <p className="px-8 text-center text-[12.5px]" style={{ color: "#636c73" }}>
+                        {phase === "starting" ? "Starting engine…" : phase === "error" ? "Something went wrong." : "Press Start, then scan the code with WhatsApp."}
+                      </p>
+                    </div>
+                  )}
+
+                  {error && <p className="mt-2.5 text-center text-[12px]" style={{ color: "#e66a6a" }}>{error}</p>}
+                  {actionError && <p className="mt-2.5 text-center text-[12px]" style={{ color: "#e66a6a" }}>{actionError}</p>}
+                  {phase === "qr" && !error && <p className="mt-2.5 text-[11.5px]" style={{ color: "#636c73" }}>Code refreshes automatically — keep this open</p>}
+
+                  <Steps items={QR_STEPS} />
+                </>
               )}
-
-              {error && <p className="mt-2.5 text-center text-[12px]" style={{ color: "#e66a6a" }}>{error}</p>}
-              {actionError && <p className="mt-2.5 text-center text-[12px]" style={{ color: "#e66a6a" }}>{actionError}</p>}
-              {phase === "qr" && !error && <p className="mt-2.5 text-[11.5px]" style={{ color: "#636c73" }}>Code refreshes automatically — keep this open</p>}
-
-              <Steps items={QR_STEPS} />
             </div>
 
             <div className="mt-5 flex flex-col gap-2.5">
-              {phase === "idle" || phase === "error" ? (
-                <button onClick={startLinking} className="flex w-full items-center justify-center gap-2 rounded-xl text-[13.5px] font-semibold transition active:scale-[0.99]" style={{ background: "#00a884", color: "#04241d", height: 48 }}>
+              {phase === "connected" ? (
+                <button onClick={confirmLinked} className="flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl text-[15px] font-semibold transition active:scale-[0.99]" style={{ background: "#00a884", color: "#04241d" }}>
+                  Done <ArrowRight size={16} strokeWidth={2.5} />
+                </button>
+              ) : linkMode === "code" ? (
+                <>
+                  {pairCode ? (
+                    <>
+                      <button onClick={confirmLinked} className="flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl text-[15px] font-semibold transition active:scale-[0.99]" style={{ background: "#00a884", color: "#04241d" }}>
+                        I&apos;ve entered the code <ArrowRight size={16} strokeWidth={2.5} />
+                      </button>
+                      <button onClick={requestPairCode} disabled={pairBusy} className="flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl text-[13px] font-medium transition active:bg-white/10 disabled:opacity-50" style={{ border: "1px solid rgba(255,255,255,0.1)", color: "#aebac1" }}>
+                        <RefreshCw size={14} className={pairBusy ? "animate-spin" : ""} /> {pairBusy ? "Getting code…" : "New code"}
+                      </button>
+                    </>
+                  ) : (
+                    <button onClick={requestPairCode} disabled={pairBusy} className="flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl text-[15px] font-semibold transition active:scale-[0.99] disabled:opacity-50" style={{ background: "#00a884", color: "#04241d" }}>
+                      <KeyRound size={16} strokeWidth={2.5} /> {pairBusy ? "Getting code…" : "Get code"}
+                    </button>
+                  )}
+                </>
+              ) : phase === "idle" || phase === "error" ? (
+                <button onClick={startLinking} className="flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl text-[15px] font-semibold transition active:scale-[0.99]" style={{ background: "#00a884", color: "#04241d" }}>
                   <QrCode size={16} strokeWidth={2.5} /> Start linking
                 </button>
               ) : (
                 <>
-                  <button onClick={confirmLinked} className="flex w-full items-center justify-center gap-2 rounded-xl text-[13.5px] font-semibold transition active:scale-[0.99]" style={{ background: "#00a884", color: "#04241d", height: 48 }}>
-                    {phase === "connected" ? (
-                      <>Done <ArrowRight size={16} strokeWidth={2.5} /></>
-                    ) : (
-                      <>I&apos;ve scanned the code <ArrowRight size={16} strokeWidth={2.5} /></>
-                    )}
+                  <button onClick={confirmLinked} className="flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl text-[15px] font-semibold transition active:scale-[0.99]" style={{ background: "#00a884", color: "#04241d" }}>
+                    I&apos;ve scanned the code <ArrowRight size={16} strokeWidth={2.5} />
                   </button>
-                  <button onClick={startLinking} className="flex w-full items-center justify-center gap-2 rounded-xl text-[13px] font-medium transition hover:bg-white/10" style={{ border: "1px solid rgba(255,255,255,0.1)", color: "#aebac1", height: 44 }}>
+                  <button onClick={startLinking} className="flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl text-[13px] font-medium transition active:bg-white/10" style={{ border: "1px solid rgba(255,255,255,0.1)", color: "#aebac1" }}>
                     <RefreshCw size={14} /> Refresh code
                   </button>
                 </>
@@ -649,7 +864,7 @@ export default function LinkPage() {
                 const all = [
                   ...freshChats.map((c) => ({ ...c, rule: ruleByJid.get(c.jid) ?? null })),
                   ...freshRules.filter((r) => !seen.has(r.jid)).map((r) => ({ jid: r.jid, name: r.name, rule: r as { list: "black" | "white" } })),
-                ].filter((r) => !fq || r.name.toLowerCase().includes(fq) || r.jid.split("@")[0].includes(fq));
+                ].filter((r) => !fq || (r.name ?? "").toLowerCase().includes(fq) || (r.jid ?? "").split("@")[0].includes(fq));
                 if (all.length === 0) {
                   return (
                     <p className="py-4 text-center text-[12.5px]" style={{ color: "#636c73" }}>
@@ -662,7 +877,7 @@ export default function LinkPage() {
                     rows={all.map((row) => ({
                       jid: row.jid,
                       name: row.name,
-                      sub: row.jid.split("@")[0],
+                      sub: (row.jid ?? "").split("@")[0],
                       imgUrl: (row as { imgUrl?: string | null }).imgUrl ?? null,
                       badge: row.jid.endsWith("@g.us") ? "Group" : undefined,
                       rule: row.rule,

@@ -18,15 +18,16 @@ type Props = {
   emptyText: string;
 };
 
-function hueOf(s: string): number {
+function hueOf(s: string | null | undefined): number {
+  const str = s ?? "";
   let h = 11;
-  for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 9973;
+  for (const c of str) h = (h * 31 + c.charCodeAt(0)) % 9973;
   return h % 360;
 }
 
-function initialsOf(name: string): string {
+function initialsOf(name: string | null | undefined): string {
   return (
-    name
+    (name ?? "")
       .split(" ")
       .map((w) => w[0])
       .join("")
@@ -36,7 +37,7 @@ function initialsOf(name: string): string {
 }
 
 /** WhatsApp-style avatar: synced photo when there is one, initials tile otherwise. */
-function RowAvatar({ jid, name, imgUrl }: { jid: string; name: string; imgUrl?: string | null }) {
+function RowAvatar({ jid, name, imgUrl }: { jid: string | null | undefined; name: string | null | undefined; imgUrl?: string | null }) {
   const [broken, setBroken] = useState(false);
   const hue = hueOf(jid);
   const showPhoto = !!imgUrl && imgUrl.startsWith("http") && !broken;
@@ -87,9 +88,10 @@ export default function ContactAccessTable({ rows, pendingJid, onToggle, emptyTe
           const blocked = row.rule?.list === "black";
           const allowed = row.rule?.list === "white";
           const busy = pendingJid === row.jid;
+          const displayName = row.name ?? "Unknown";
           return (
             <li
-              key={row.jid}
+              key={row.jid ?? `row-${i}`}
               className="grid grid-cols-[1fr_auto_auto] items-center gap-3 px-4 py-2.5"
               style={{
                 borderTop: i === 0 ? undefined : "1px solid rgba(255,255,255,0.06)",
@@ -97,10 +99,10 @@ export default function ContactAccessTable({ rows, pendingJid, onToggle, emptyTe
               }}
             >
               <span className="flex min-w-0 items-center gap-3">
-                <RowAvatar jid={row.jid} name={row.name} imgUrl={row.imgUrl} />
+                <RowAvatar jid={row.jid} name={displayName} imgUrl={row.imgUrl} />
                 <span className="min-w-0">
                   <span className="flex items-center gap-1.5 text-[13.5px] font-semibold" style={{ color: "#e9edef" }}>
-                    <span className="truncate">{row.name}</span>
+                    <span className="truncate">{displayName}</span>
                     {row.badge && (
                       <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: "rgba(0,168,132,0.12)", color: "#00d19f" }}>
                         {row.badge}
@@ -115,11 +117,11 @@ export default function ContactAccessTable({ rows, pendingJid, onToggle, emptyTe
               </span>
               <span className="flex w-14 justify-center">
                 <input
-                  type="checkbox"
-                  checked={!!blocked}
-                  disabled={busy}
-                  onChange={() => onToggle(row, blocked ? null : "black")}
-                  aria-label={`Block ${row.name}`}
+                    type="checkbox"
+                    checked={!!blocked}
+                    disabled={busy}
+                    onChange={() => onToggle(row, blocked ? null : "black")}
+                    aria-label={`Block ${displayName}`}
                   title="Block (messages are dropped instantly)"
                   className="h-[18px] w-[18px] shrink-0 cursor-pointer accent-[#e66a6a] disabled:opacity-50"
                 />
@@ -129,8 +131,8 @@ export default function ContactAccessTable({ rows, pendingJid, onToggle, emptyTe
                   type="checkbox"
                   checked={!!allowed}
                   disabled={busy}
-                  onChange={() => onToggle(row, allowed ? null : "white")}
-                  aria-label={`Allow ${row.name}`}
+                    onChange={() => onToggle(row, allowed ? null : "white")}
+                    aria-label={`Allow ${displayName}`}
                   title="Allow (counts in Invite-only mode)"
                   className="h-[18px] w-[18px] shrink-0 cursor-pointer accent-[#00a884] disabled:opacity-50"
                 />
