@@ -18,6 +18,8 @@ interface ProductRow {
   description: string;
   image?: string;
   condition?: string;
+  costPrice?: number;
+  sold?: number;
 }
 
 const ProductView =
@@ -34,6 +36,9 @@ const ProductView =
         status: String,
         description: String,
         image: String,
+        condition: String,
+        costPrice: Number,
+        sold: Number,
       },
       { collection: "products" },
     ),
@@ -177,6 +182,42 @@ export async function findProductByIdOrSku(idOrSku: string): Promise<ShopProduct
     }).lean());
   if (!doc) return null;
   return toShopProduct(doc);
+}
+
+function asFiniteNumber(v: unknown, fallback: number): number {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/**
+ * Bulk catalog seed (dashboard migrations, local -> cloud moves). Upserts by
+ * SKU (fallback: exact name), so re-runs are safe. Returns match/insert counts.
+ */
+export async function upsertProducts(items: unknown[]): Promise<{ matched: number; upserted: number }> {
+  await ensureConn();
+  let matched = 0;
+  let upserted = 0;
+  for (const raw of items.slice(0, 200)) {
+    if (!raw || typeof raw !== "object") continue;
+    const r = raw as Record<string, unknown>;
+    const name = typeof r.name === "string" ? r.name.trim().slice(0, 200) : "";
+    if (!name) continue;
+    const sku = typeof r.sku === "string" ? r.sku.trim().slice(0, 60) : "";
+    const set: Record<string, unknown> = { name };
+    if (sku) set.sku = sku;
+    if (typeof r.quantity !== "undefined") set.quantity = Math.max(0, Math.round(asFiniteNumber(r.quantity, 0)));
+    if (typeof r.unitPrice !== "undefined") set.unitPrice = Math.max(0, asFiniteNumber(r.unitPrice, 0));
+    if (typeof r.costPrice !== "undefined") set.costPrice = Math.max(0, asFiniteNumber(r.costPrice, 0));
+    if (typeof r.sold !== "undefined") set.sold = Math.max(0, Math.round(asFiniteNumber(r.sold, 0)));
+    for (const k of ["category", "status", "description", "image", "condition"] as const) {
+      if (typeof r[k] === "string" && (r[k] as string).trim()) set[k] = (r[k] as string).trim().slice(0, 1000);
+    }
+    const filter = sku ? { sku } : { name };
+    const res = await ProductView.updateOne(filter, { $set: set }, { upsert: true });
+    matched += res.matchedCount ?? 0;
+    upserted += res.upsertedCount ?? 0;
+  }
+  return { matched, upserted };
 }
 
 /**

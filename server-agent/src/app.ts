@@ -512,6 +512,28 @@ app.get("/sessions/:userId/groups/details", async (c) => {
   }
 });
 
+// One-off catalog seed (local -> cloud moves): upserts products by SKU/name.
+// Key-guarded by the /sessions/* auth above. Accepts a raw JSON array or
+// { products: [...] } (max 200 per call). Remove once migrated if unwanted.
+app.post("/sessions/:userId/admin/seed-products", async (c) => {
+  const userId = c.req.param("userId");
+  const body = (await c.req.json().catch(() => null)) as { products?: unknown } | unknown[] | null;
+  const items = Array.isArray(body) ? body : Array.isArray(body?.products) ? body.products : null;
+  if (!items || items.length === 0) {
+    return c.json({ error: "Send a JSON array of products (or { products: [...] }), max 200." }, 400);
+  }
+  try {
+    const { upsertProducts } = await import("./sessions/agent-tools/store.js");
+    const res = await upsertProducts(items);
+    return c.json({ userId, ...res, received: items.length });
+  } catch (e) {
+    return c.json(
+      { error: e instanceof Error ? e.message : "seed failed" },
+      500,
+    );
+  }
+});
+
 // Send a message via a session
 app.post("/sessions/:userId/send", async (c) => {
   const userId = c.req.param("userId");
@@ -535,8 +557,7 @@ app.post("/sessions/:userId/send", async (c) => {
 });
 
 // Post a WhatsApp Status (story) via a session
-app.post("/sessions/:userId/status", async (c) => {
-  const userId = c.req.param("userId");
+app.post("/sessions/:userId/status", async (c) => {  const userId = c.req.param("userId");
   const session = sessions.getSession(userId);
   if (!session) {
     return c.json({ error: "session not found" }, 404);
