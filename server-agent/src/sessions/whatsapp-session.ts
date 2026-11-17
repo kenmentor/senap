@@ -1335,7 +1335,13 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
     }
     const proof = (kind: "text" | "image" | "video", sent: unknown) => {
       const key = (sent as { key?: { id?: string } } | null | undefined)?.key;
-      return { kind, line, audience: audience.length, messageId: key?.id ?? null };
+      const out = { kind, line, audience: audience.length, messageId: key?.id ?? null };
+      try {
+        console.log(`Status posted: ${kind} to ${audience.length} recipient(s) (id ${out.messageId ?? "?"}, line ${line || "?"})`);
+      } catch {
+        /* logging never blocks the post */
+      }
+      return out;
     };
     const STATUS_JID = "status@broadcast";
     if (videoUrl) {

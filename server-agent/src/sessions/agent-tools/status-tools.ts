@@ -80,14 +80,20 @@ export const statusTools: ToolDefinition[] = [
         const u = ctx.sock?.user as unknown as { id?: string } | null | undefined;
         return u?.id ?? "";
       })();
-      const proof = (kind: "text" | "image" | "video", sent: unknown) => {
-        const key = (sent as { key?: { id?: string } } | null | undefined)?.key;
-        return { posted: true as const, kind, line, audience: audience.length, messageId: key?.id ?? null };
-      };
       const audience = buildStatusAudience(ctx.contacts, line || undefined);
       if (audience.length === 0) {
         return { error: "Nobody to show the status to yet — this line has no chats." };
       }
+      const proof = (kind: "text" | "image" | "video", sent: unknown) => {
+        const key = (sent as { key?: { id?: string } } | null | undefined)?.key;
+        const out = { posted: true as const, kind, line, audience: audience.length, messageId: key?.id ?? null };
+        try {
+          console.log(`Status posted: ${kind} to ${audience.length} recipient(s) (id ${out.messageId ?? "?"}, line ${line || "?"})`);
+        } catch {
+          /* logging never blocks the post */
+        }
+        return out;
+      };
 
       try {
         if (videoUrl) {
@@ -128,6 +134,45 @@ export const statusTools: ToolDefinition[] = [
       } catch (e) {
         return { error: e instanceof Error ? e.message : "Status post failed." };
       }
+    },
+  },
+  {
+    name: "check_status_setup",
+    description:
+      "OWNER ONLY. Diagnose an invisible Status: connection state, which line would post, how many contacts would receive it (audience), and the phone's own Status privacy setting. Run this BEFORE re-posting when a status is reported missing — if privacy is restricted or the audience is tiny, say so instead of posting again.",
+    scope: "owner",
+    parameters: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+    execute: async (_args, ctx) => {
+      if (!ctx.sock) return { connected: false, error: "WhatsApp is not connected." };
+      const line = (() => {
+        const u = ctx.sock?.user as unknown as { id?: string } | null | undefined;
+        return u?.id ?? "";
+      })();
+      const audience = buildStatusAudience(ctx.contacts, line || undefined);
+      let statusPrivacy: unknown = "unknown";
+      try {
+        const s = ctx.sock as unknown as {
+          fetchPrivacySettings?: (force?: boolean) => Promise<Record<string, unknown>>;
+        };
+        if (typeof s.fetchPrivacySettings === "function") {
+          const all = await s.fetchPrivacySettings(true);
+          statusPrivacy = all?.status ?? "unknown";
+        }
+      } catch (e) {
+        statusPrivacy = `unreadable (${e instanceof Error ? e.message : "query failed"})`;
+      }
+      return {
+        connected: true,
+        line,
+        audience: audience.length,
+        statusPrivacy,
+        note:
+          "Post reaches the audience list only. If statusPrivacy is 'none'/restricted, change it on the phone (Settings > Privacy > Status). If audience is 1, only this phone would see it — the line has no other chats yet.",
+      };
     },
   },
 ];
