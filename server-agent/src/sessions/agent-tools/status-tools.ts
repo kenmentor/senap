@@ -47,24 +47,35 @@ export const statusTools: ToolDefinition[] = [
       }
       if (!ctx.sock) return { error: "WhatsApp is not connected." };
 
+      // Which line is posting — the owner may run several, and a status only
+      // ever appears on the line that posted it.
+      const line = (() => {
+        const u = ctx.sock?.user as unknown as { id?: string } | null | undefined;
+        return u?.id ?? "";
+      })();
+      const proof = (kind: "text" | "image" | "video", sent: unknown) => {
+        const key = (sent as { key?: { id?: string } } | null | undefined)?.key;
+        return { posted: true as const, kind, line, messageId: key?.id ?? null };
+      };
+
       try {
         if (videoUrl) {
           if (!/^https?:\/\//i.test(videoUrl)) return { error: "Only http(s) URLs are allowed." };
-          await ctx.sock.sendMessage(STATUS_JID, {
+          const sent = await ctx.sock.sendMessage(STATUS_JID, {
             video: { url: videoUrl },
             caption: text || undefined,
           });
-          return { posted: true, kind: "video" };
+          return proof("video", sent);
         }
         if (imageUrl) {
           if (!/^https?:\/\//i.test(imageUrl)) return { error: "Only http(s) URLs are allowed." };
-          await ctx.sock.sendMessage(STATUS_JID, {
+          const sent = await ctx.sock.sendMessage(STATUS_JID, {
             image: { url: imageUrl },
             caption: text || undefined,
           });
-          return { posted: true, kind: "image" };
+          return proof("image", sent);
         }
-        await ctx.sock.sendMessage(
+        const sent = await ctx.sock.sendMessage(
           STATUS_JID,
           { text },
           {
@@ -72,7 +83,7 @@ export const statusTools: ToolDefinition[] = [
             font: 0,
           },
         );
-        return { posted: true, kind: "text" };
+        return proof("text", sent);
       } catch (e) {
         return { error: e instanceof Error ? e.message : "Status post failed." };
       }

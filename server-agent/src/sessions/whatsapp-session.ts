@@ -1315,7 +1315,7 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
     imageUrl?: string;
     videoUrl?: string;
     backgroundColor?: string;
-  }): Promise<{ kind: "text" | "image" | "video" }> {
+  }): Promise<{ kind: "text" | "image" | "video"; line: string; messageId: string | null }> {
     if (!this.sock) {
       throw new Error(`Session ${this.userId} is not connected`);
     }
@@ -1325,25 +1325,30 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
     if (!text && !imageUrl && !videoUrl) {
       throw new Error("`text` or an `imageUrl`/`videoUrl` is required.");
     }
+    const line = (this.sock.user as unknown as { id?: string } | null | undefined)?.id ?? "";
+    const proof = (kind: "text" | "image" | "video", sent: unknown) => {
+      const key = (sent as { key?: { id?: string } } | null | undefined)?.key;
+      return { kind, line, messageId: key?.id ?? null };
+    };
     const STATUS_JID = "status@broadcast";
     if (videoUrl) {
       if (!/^https?:\/\//i.test(videoUrl)) throw new Error("Only http(s) URLs are allowed.");
-      await this.sock.sendMessage(STATUS_JID, {
+      const sent = await this.sock.sendMessage(STATUS_JID, {
         video: { url: videoUrl },
         caption: text || undefined,
       });
-      return { kind: "video" };
+      return proof("video", sent);
     }
     if (imageUrl) {
       if (!/^https?:\/\//i.test(imageUrl)) throw new Error("Only http(s) URLs are allowed.");
-      await this.sock.sendMessage(STATUS_JID, {
+      const sent = await this.sock.sendMessage(STATUS_JID, {
         image: { url: imageUrl },
         caption: text || undefined,
       });
-      return { kind: "image" };
+      return proof("image", sent);
     }
     const bg = (input.backgroundColor ?? "#00a884").trim();
-    await this.sock.sendMessage(
+    const sent = await this.sock.sendMessage(
       STATUS_JID,
       { text },
       {
@@ -1351,7 +1356,7 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
         font: 0,
       },
     );
-    return { kind: "text" };
+    return proof("text", sent);
   }
 
   async connectToWhatsApp(userId: string): Promise<void> {
