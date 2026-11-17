@@ -1,24 +1,7 @@
 import type { ToolDefinition } from "./tool-types.js";
 import { toolArgs } from "./tool-types.js";
-import { normalizeJid } from "./store.js";
+import { nameScore, normalizeJid } from "./store.js";
 import type { BufferedMessage } from "./tool-types.js";
-
-function digitsOf(value: string): string {
-  return value.replace(/\D/g, "");
-}
-
-function matchesName(name: string, query: string): boolean {
-  const q = query.trim().toLowerCase();
-  if (!q) return false;
-  if (name.toLowerCase().includes(q)) return true;
-  const qDigits = digitsOf(q);
-  return qDigits.length >= 4 && digitsOf(name).includes(qDigits);
-}
-
-function matchesJid(jid: string, query: string): boolean {
-  const qDigits = digitsOf(query);
-  return qDigits.length >= 4 && digitsOf(jid.split("@")[0]).includes(qDigits);
-}
 
 function entryText(m: BufferedMessage): string {
   return m.text.length > 200 ? `${m.text.slice(0, 200)}…` : m.text;
@@ -41,19 +24,17 @@ export const outreachTools: ToolDefinition[] = [
     execute: async (args, ctx) => {
       const query = toolArgs.asString(args.query).trim();
       if (!query) return { error: "Empty query." };
-      const matches: {
+      const scored: {
         jid: string;
         type: "contact" | "group";
         name: string;
         members?: number;
+        score: number;
       }[] = [];
-      const seen = new Set<string>();
       for (const [jid, c] of ctx.contacts) {
         if (jid.endsWith("@g.us")) continue;
-        if (matchesName(c.name, query) || matchesJid(jid, query)) {
-          matches.push({ jid, type: "contact", name: c.name });
-          seen.add(jid);
-        }
+        const score = Math.max(nameScore(c.name, query), nameScore(jid, query));
+        if (score > 0) scored.push({ jid, type: "contact", name: c.name, score });
       }
       // Groups live on the socket, not in contacts — fetch when online.
       if (ctx.sock) {
@@ -61,28 +42,42 @@ export const outreachTools: ToolDefinition[] = [
           const groups = await ctx.sock.groupFetchAllParticipating();
           for (const [jid, meta] of Object.entries(groups)) {
             const subject = meta.subject || "Group";
-            if (matchesName(subject, query) || matchesJid(jid, query)) {
-              if (seen.has(jid)) continue;
-              matches.push({
+            const score = Math.max(nameScore(subject, query), nameScore(jid, query));
+            if (score > 0 && !scored.some((s) => s.jid === jid)) {
+              scored.push({
                 jid,
                 type: "group",
                 name: subject,
                 members: meta.participants?.length ?? 0,
+                score,
               });
-              seen.add(jid);
             }
           }
         } catch {
           /* offline — contact matches still returned */
         }
       }
+      scored.sort((a, b) => b.score - a.score);
+      const matches = scored.slice(0, 5).map(({ jid, type, name, members }) => ({
+        jid,
+        type,
+        name,
+        ...(members !== undefined ? { members } : {}),
+      }));
       if (matches.length === 0) {
         return {
-          matches: [],
+          matches,
           note: `No contact or group matches "${query}". Try resolve_contact for a number check, or list_groups to browse all groups.`,
         };
       }
-      return { matches: matches.slice(0, 5) };
+      if (matches.length > 1 && scored[0].score - scored[1].score < 15) {
+        return {
+          matches,
+          ambiguous: true as const,
+          note: "Several close matches — confirm with the owner which one ('is it X or Y?') before acting.",
+        };
+      }
+      return { matches };
     },
   },
   {
@@ -116,14 +111,17 @@ export const outreachTools: ToolDefinition[] = [
         }
       }
       if (!jid || (!ctx.contacts.has(jid) && !ctx.messageLog.has(jid))) {
+        let best = 0;
         for (const [cJid, c] of ctx.contacts) {
           if (cJid.endsWith("@g.us")) continue;
-          if (matchesName(c.name, query) || matchesJid(cJid, query)) {
+          const score = Math.max(nameScore(c.name, query), nameScore(cJid, query));
+          if (score > best) {
+            best = score;
             jid = cJid;
             name = c.name;
-            break;
           }
         }
+        if (best === 0) jid = "";
       }
       if (!jid) return { error: `No customer matches "${query}".` };
       const log = ctx.messageLog.get(jid) ?? [];

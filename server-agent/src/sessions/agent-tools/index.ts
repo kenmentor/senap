@@ -18,6 +18,8 @@ import { broadcastTools } from "./broadcast-tools.js";
 import { groupAgentTools } from "./group-agent-tools.js";
 import { outreachTools } from "./outreach-tools.js";
 import { campaignTools } from "./campaign-tools.js";
+import { webTools } from "./web-tools.js";
+import { memoryTools } from "./memory-tools.js";
 
 export const ALL_TOOLS: ToolDefinition[] = [
   ...timeTools,
@@ -36,6 +38,8 @@ export const ALL_TOOLS: ToolDefinition[] = [
   ...groupAgentTools,
   ...outreachTools,
   ...campaignTools,
+  ...webTools,
+  ...memoryTools,
 ];
 
 export function toolSchemas(): OpenAI.Chat.Completions.ChatCompletionTool[] {

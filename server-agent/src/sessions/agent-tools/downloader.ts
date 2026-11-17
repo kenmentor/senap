@@ -34,7 +34,7 @@ function isBlockedIp(ip: string): boolean {
 }
 
 /** Resolve the host and refuse private/internal addresses (SSRF guard). */
-async function assertPublicUrl(raw: string): Promise<URL> {
+export async function assertPublicUrl(raw: string): Promise<URL> {
   const url = new URL(raw);
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error("Only http(s) URLs are allowed.");

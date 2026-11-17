@@ -1,18 +1,6 @@
 import type { ToolDefinition } from "./tool-types.js";
 import { toolArgs } from "./tool-types.js";
-import { normalizeJid } from "./store.js";
-
-function digitsOf(jid: string): string {
-  return jid.split("@")[0].replace(/\D/g, "");
-}
-
-function matchesContact(jid: string, name: string, query: string): boolean {
-  const q = query.trim().toLowerCase();
-  if (!q) return false;
-  if (name.toLowerCase().includes(q)) return true;
-  const qDigits = q.replace(/\D/g, "");
-  return qDigits.length >= 4 && digitsOf(jid).includes(qDigits);
-}
+import { nameScore, normalizeJid } from "./store.js";
 
 export const contactTools: ToolDefinition[] = [
   {
@@ -31,11 +19,23 @@ export const contactTools: ToolDefinition[] = [
     execute: async (args, ctx) => {
       const query = toolArgs.asString(args.query).trim();
       if (!query) return { error: "Empty query." };
-      const hits: { jid: string; name: string; lastSeen: number }[] = [];
+      // Ranked, typo-tolerant: exact > starts-with > substring > close-typo.
+      // Ambiguous results come back scored so the agent can ask "is it X or Y?"
+      // with real names instead of failing on a misspelling.
+      const ranked: { jid: string; name: string; lastSeen: number; score: number }[] = [];
       for (const [jid, c] of ctx.contacts) {
-        if (matchesContact(jid, c.name, query)) hits.push({ jid, ...c });
+        const score = Math.max(nameScore(c.name, query), nameScore(jid, query));
+        if (score > 0) ranked.push({ jid, name: c.name, lastSeen: c.lastSeen, score });
       }
-      if (hits.length > 0) return { contacts: hits.slice(0, 5) };
+      ranked.sort((a, b) => b.score - a.score || b.lastSeen - a.lastSeen);
+      const hits = ranked.slice(0, 5);
+      if (hits.length > 0) {
+        const ambiguous = hits.length > 1 && hits[0].score - hits[1].score < 15;
+        return {
+          contacts: hits.map(({ jid, name, lastSeen }) => ({ jid, name, lastSeen })),
+          ...(ambiguous ? { ambiguous: true as const, note: "Several close matches — confirm with the owner which one ('is it X or Y?') before acting." } : {}),
+        };
+      }
       // Unknown here — check the number really exists on WhatsApp.
       let jid: string;
       try {

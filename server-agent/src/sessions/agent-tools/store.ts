@@ -386,3 +386,57 @@ export function isOwnerJid(customerJid: string, ownerPhone: string | undefined):
   const tail = Math.min(ownerDigits.length, callerDigits.length, 12);
   return ownerDigits.slice(-tail) === callerDigits.slice(-tail);
 }
+
+/** Small edit distance for typo-tolerant name matching (no dependency). */
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+/**
+ * Typo-tolerant name score 0-100 for "is it this or this?" recommendations.
+ * Exact > starts-with > substring > close-typo. Digits still match by
+ * substring (min 4). Returns 0 for no resemblance.
+ */
+export function nameScore(name: string, query: string): number {
+  const n = name.trim().toLowerCase();
+  const q = query.trim().toLowerCase();
+  if (!n || !q) return 0;
+  if (n === q) return 100;
+  const qDigits = q.replace(/\D/g, "");
+  const nDigits = n.replace(/\D/g, "");
+  if (qDigits.length >= 4 && nDigits.includes(qDigits)) return 90;
+  if (n.startsWith(q)) return 80;
+  if (n.includes(q)) return 70;
+  // Word-level: any word in the name close to the query (handles "Amaara"~"Amara").
+  const words = n.split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
+  let best = 0;
+  const targets = [q, ...q.split(/[^a-z0-9]+/).filter((w) => w.length >= 3)];
+  for (const w of words) {
+    for (const t of targets) {
+      if (!t) continue;
+      if (w === t) return 85;
+      if (w.startsWith(t) || t.startsWith(w)) {
+        best = Math.max(best, 60);
+        continue;
+      }
+      const dist = levenshtein(w, t);
+      const longest = Math.max(w.length, t.length);
+      // Allow ~1 typo per 4 chars on words of 4+.
+      if (longest >= 4 && dist <= Math.max(1, Math.floor(longest / 4))) {
+        best = Math.max(best, 55 - dist * 5);
+      }
+    }
+  }
+  return best;
+}
