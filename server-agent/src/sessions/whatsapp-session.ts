@@ -307,22 +307,34 @@ export class WhatsappSession {
       const proxy = new Proxy(raw, {
         get(target, prop) {
           if (prop === "sendMessage") {
-            return (jid: string, content: unknown, options?: unknown) =>
-              session.enqueueSend(String(jid), async () => {
-                const t = target as unknown as {
-                  sendMessage: (j: string, c: unknown, o?: unknown) => Promise<unknown>;
-                };
-                const sent = await t.sendMessage(jid, content, options);
-                // Ledger our own sends: their server echoes return via upsert
-                // as fromMe — matched here so we never answer ourselves.
+            return (jid: string, content: unknown, options?: unknown) => {
+              // Register the outbound text BEFORE queueing/sending: server
+              // echoes routinely arrive during the typing delay + cross-chat
+              // gap, i.e. before the send resolves and before anything is
+              // logged. Without this the echo looks like a brand-new owner
+              // message and the bot answers itself forever.
+              const text = WhatsappSession.outboundTextOf(content);
+              if (text) session.trackOutboundStart(String(jid), text);
+              return session.enqueueSend(String(jid), async () => {
                 try {
-                  const id = (sent as { key?: { id?: string } } | null | undefined)?.key?.id;
-                  if (id) session.rememberOutId(id);
-                } catch {
-                  /* ledger is best-effort */
+                  const t = target as unknown as {
+                    sendMessage: (j: string, c: unknown, o?: unknown) => Promise<unknown>;
+                  };
+                  const sent = await t.sendMessage(jid, content, options);
+                  // Ledger our own sends: their server echoes return via upsert
+                  // as fromMe — matched here so we never answer ourselves.
+                  try {
+                    const id = (sent as { key?: { id?: string } } | null | undefined)?.key?.id;
+                    if (id) session.rememberOutId(id);
+                  } catch {
+                    /* ledger is best-effort */
+                  }
+                  return sent as never;
+                } finally {
+                  if (text) session.trackOutboundDone(String(jid), text);
                 }
-                return sent as never;
               });
+            };
           }
           const value = (target as unknown as Record<string | symbol, unknown>)[prop];
           return typeof value === "function"
@@ -346,6 +358,62 @@ export class WhatsappSession {
   /** Consecutive self-chat echoes of identical text (loop-breaker signal). */
   private echoStreak = 0;
   private lastEchoText: string | null = null;
+  /**
+   * Texts currently being sent (registered at call time, removed after the
+   * socket write resolves). Closes the pre-log race where an echo arrives
+   * during the typing delay, before anything is logged or ledgered.
+   */
+  private pendingOutbound = new Map<string, { text: string; at: number }[]>();
+  private static readonly PENDING_TTL_MS = 120_000;
+
+  /** Best-effort text of an outgoing socket payload (text/caption carriers). */
+  private static outboundTextOf(content: unknown): string {
+    if (!content || typeof content !== "object") return "";
+    const c = content as Record<string, unknown>;
+    if (typeof c.text === "string" && c.text) return c.text;
+    if (typeof c.caption === "string" && c.caption) return c.caption;
+    for (const k of ["image", "video", "document"] as const) {
+      const m = c[k];
+      if (m && typeof m === "object") {
+        const cap = (m as Record<string, unknown>).caption;
+        if (typeof cap === "string" && cap) return cap;
+      }
+    }
+    return "";
+  }
+
+  private trackOutboundStart(jid: string, text: string): void {
+    const arr = this.pendingOutbound.get(jid) ?? [];
+    arr.push({ text, at: Date.now() });
+    while (arr.length > 5) arr.shift();
+    this.pendingOutbound.set(jid, arr);
+  }
+
+  private trackOutboundDone(jid: string, text: string): void {
+    const arr = this.pendingOutbound.get(jid);
+    if (!arr) return;
+    const i = arr.findIndex((e) => e.text === text);
+    if (i >= 0) arr.splice(i, 1);
+    if (arr.length === 0) this.pendingOutbound.delete(jid);
+  }
+
+  /** True when this exact text is currently being sent to this chat (or a
+   *  namespace twin of it) — i.e. an in-flight echo, not a human message. */
+  private pendingMatches(remoteJid: string, text: string): boolean {
+    if (!text) return false;
+    const now = Date.now();
+    let hit = false;
+    for (const [jid, arr] of this.pendingOutbound) {
+      const fresh = arr.filter((e) => now - e.at < WhatsappSession.PENDING_TTL_MS);
+      if (fresh.length !== arr.length) {
+        if (fresh.length === 0) this.pendingOutbound.delete(jid);
+        else this.pendingOutbound.set(jid, fresh);
+      }
+      if (jid !== remoteJid && !isSelfJid(jid, remoteJid)) continue;
+      if (fresh.some((e) => e.text === text)) hit = true;
+    }
+    return hit;
+  }
 
   private rememberOutId(id: string): void {
     if (!id) return;
@@ -1001,6 +1069,7 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
     this.echoIds.clear();
     this.echoStreak = 0;
     this.lastEchoText = null;
+    this.pendingOutbound.clear();
     if (global.gc) {
       try {
         global.gc();
@@ -1292,6 +1361,10 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
     if (this.stopped || epoch !== this.epoch || this.sock !== sock) return;
     const mid = m.key?.id ?? "";
     if (!mid || this.markSeen(mid)) return;
+    // Our own sends (e.g. an agent-posted status) echo back as fromMe.
+    // ID match = definitely ours; anything else falls through to the
+    // ownership + legitimacy checks below.
+    if (mid && this.echoIds.delete(mid)) return;
 
     // Own post? fromMe, or the participant resolves to one of our own forms
     // (PN vs LID namespaces — same dance as the self-chat check).
@@ -1312,6 +1385,18 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
 
     const caption = ((img?.caption ?? vid?.caption ?? "") as string).trim();
     const kind = vid ? ("video" as const) : ("photo" as const);
+    // Our own agent-posted status echoing back while the post is still
+    // in-flight (pre-ledger): never re-import what we just posted on purpose.
+    if (caption && this.pendingMatches("status@broadcast", caption)) {
+      const ts0 = m.messageTimestamp;
+      await markProcessed(
+        this.userId,
+        "status@broadcast",
+        mid,
+        new Date(typeof ts0 === "number" ? ts0 * 1000 : Number(ts0 ?? Date.now())),
+      );
+      return;
+    }
 
     // Legitimacy gate: caption must read as a genuine product post.
     const { classifyStatusPost } = await import("../assistant/agent-runner.js");
@@ -1626,9 +1711,16 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
       return out;
     };
     const STATUS_JID = "status@broadcast";
+    // Route through the serializing proxy (not the raw socket) so the send
+    // is ledgered + tracked like every other outbound write — otherwise its
+    // server echo returns as a "new" own status and gets re-imported.
+    const psock = this.liveSock();
+    if (!psock) {
+      throw new Error(`Session ${this.userId} is not connected`);
+    }
     if (videoUrl) {
       if (!/^https?:\/\//i.test(videoUrl)) throw new Error("Only http(s) URLs are allowed.");
-      const sent = await this.sock.sendMessage(
+      const sent = await psock.sendMessage(
         STATUS_JID,
         {
           video: { url: videoUrl },
@@ -1640,7 +1732,7 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
     }
     if (imageUrl) {
       if (!/^https?:\/\//i.test(imageUrl)) throw new Error("Only http(s) URLs are allowed.");
-      const sent = await this.sock.sendMessage(
+      const sent = await psock.sendMessage(
         STATUS_JID,
         {
           image: { url: imageUrl },
@@ -1651,7 +1743,7 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
       return proof("image", sent);
     }
     const bg = (input.backgroundColor ?? "#00a884").trim();
-    const sent = await this.sock.sendMessage(
+    const sent = await psock.sendMessage(
       STATUS_JID,
       { text },
       {
@@ -1924,7 +2016,11 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
             // is what caused runaway self-reply loops (e.g. endless greetings
             // after scheduling several tasks at once).
             const lastOut = this.lastOutgoingText(remoteJid);
-            if (lastOut && got.text !== "" && lastOut.text === got.text && Date.now() - lastOut.ts < 60_000) {
+            const sameRecent = lastOut && got.text !== "" && lastOut.text === got.text && Date.now() - lastOut.ts < 60_000;
+            // In-flight echo: our text is still on the wire (typing delay /
+            // cross-chat gap) so nothing is logged or ledgered yet.
+            const inFlight = this.pendingMatches(remoteJid, got.text);
+            if (sameRecent || inFlight) {
               if (this.lastEchoText === got.text) this.echoStreak += 1;
               else this.echoStreak = 1;
               this.lastEchoText = got.text;
