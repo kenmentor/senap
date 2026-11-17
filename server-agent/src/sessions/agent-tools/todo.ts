@@ -3,6 +3,7 @@ import type { ToolDefinition } from "./tool-types.js";
 import { toolArgs } from "./tool-types.js";
 import { nowIn, loadBusiness } from "./store.js";
 import { ensureMongo } from "../mongo.js";
+import { JobModel } from "./jobs.js";
 
 interface ReminderRow {
   userId: string;
@@ -56,9 +57,30 @@ export async function takeDueReminders(userId: string, customerJid: string): Pro
     dueAt: { $lte: now },
   }).lean();
   if (docs.length === 0) return [];
-  const ids = docs.map((d) => d._id);
-  await ReminderModel.updateMany({ _id: { $in: ids } }, { $set: { reminded: true } });
-  return docs.map((d) => ({ id: String(d._id), userId: d.userId, text: d.text, dueAt: d.dueAt }));
+  // Single-delivery rule: reminders now ride the durable task queue (see
+  // add_reminder). Only hand-deliver here when NO queue job owns the reminder
+  // (legacy rows from before the queue wiring). Otherwise just retire the row
+  // — the queue delivers exactly once, on time, even if nobody writes first.
+  const out: DueReminder[] = [];
+  const retire: unknown[] = [];
+  for (const d of docs) {
+    const key = `reminder:${String(d._id)}`;
+    const job = await JobModel.findOne({ repeatKey: key }).select("status").lean().catch(() => null);
+    if (job && (job.status === "pending" || job.status === "running")) {
+      retire.push(d._id);
+      continue;
+    }
+    if (job && job.status === "done") {
+      retire.push(d._id);
+      continue;
+    }
+    retire.push(d._id);
+    out.push({ id: String(d._id), userId: d.userId, text: d.text, dueAt: d.dueAt });
+  }
+  if (retire.length > 0) {
+    await ReminderModel.updateMany({ _id: { $in: retire } }, { $set: { reminded: true } });
+  }
+  return out;
 }
 
 /** Fills the other session's todo.ts placeholder: real reminders in Mongo. */
@@ -66,7 +88,7 @@ export const todoTools: ToolDefinition[] = [
   {
     name: "add_reminder",
     description:
-      "Save a reminder for the current customer, e.g. 'call the supplier tomorrow morning' or 'follow up with me on Friday'. It is delivered as a WhatsApp message once due. dueAt must be an ISO datetime string; if the customer only says 'tomorrow morning', first call get_current_time and build the ISO datetime yourself (e.g. next day 09:00 in the shop timezone).",
+      "Save a reminder for the current customer, e.g. 'call the supplier tomorrow morning' or 'follow up with me on Friday'. It is delivered as a WhatsApp message exactly when due — even if nobody writes first — and shows on the dashboard until then. dueAt must be an ISO datetime string; if the customer only says 'tomorrow morning', first call get_current_time and build the ISO datetime yourself (e.g. next day 09:00 in the shop timezone).",
     scope: "customer",
     parameters: {
       type: "object",
@@ -82,20 +104,45 @@ export const todoTools: ToolDefinition[] = [
       const text = toolArgs.asString(args.text).trim();
       const dueAt = toolArgs.asString(args.dueAt).trim();
       if (!text) return { error: "Reminder text is empty." };
-      if (Number.isNaN(Date.parse(dueAt))) {
+      const runAt = new Date(dueAt);
+      if (Number.isNaN(runAt.getTime())) {
         return { error: `I could not understand the time "${dueAt}". Ask for a clearer time.` };
       }
       const doc = await ReminderModel.create({
         userId: ctx.userId,
         customerJid: ctx.customerJid,
         text,
-        dueAt,
+        dueAt: runAt.toISOString(),
         done: false,
         reminded: false,
       });
+      const id = String(doc._id);
+      // Deliver through the durable task queue — NOT on next-message. The job
+      // fires on time even if the customer never writes again, survives
+      // restarts, retries when the line is offline, and shows on the
+      // dashboard (same agentjobs collection as schedule_task).
+      await JobModel.create({
+        userId: ctx.userId,
+        chatJid: ctx.customerJid,
+        createdBy: ctx.customerJid,
+        createdByIsOwner: ctx.isOwner,
+        kind: "send",
+        text: `Reminder: ${text}`.slice(0, 1000),
+        runAt,
+        status: "pending",
+        attempts: 0,
+        lastError: "",
+        repeatKey: `reminder:${id}`,
+      });
+      try {
+        const m = await import("../task-queue.js");
+        m.wake();
+      } catch {
+        /* dispatcher re-arms on its own */
+      }
       const business = await loadBusiness().catch(() => null);
       const { stamp } = nowIn(business?.timezone);
-      return { id: String(doc._id), text, dueAt, savedAt: stamp };
+      return { id, text, dueAt: runAt.toISOString(), savedAt: stamp };
     },
   },
   {
@@ -132,11 +179,18 @@ export const todoTools: ToolDefinition[] = [
     },
     execute: async (args, ctx) => {
       await ensureConn();
+      const id = toolArgs.asString(args.id).trim();
       const res = await ReminderModel.updateOne(
-        { _id: toolArgs.asString(args.id), userId: ctx.userId, customerJid: ctx.customerJid },
+        { _id: id, userId: ctx.userId, customerJid: ctx.customerJid },
         { $set: { done: true } },
       );
-      return res.matchedCount > 0 ? { done: true } : { error: "Reminder not found." };
+      if (res.matchedCount === 0) return { error: "Reminder not found." };
+      // Stop the queued delivery too (already-sent messages can't be unsent).
+      await JobModel.updateMany(
+        { repeatKey: `reminder:${id}`, status: "pending" },
+        { $set: { status: "failed", lastError: "reminder completed" } },
+      );
+      return { done: true };
     },
   },
 ];
