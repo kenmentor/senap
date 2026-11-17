@@ -1979,7 +1979,12 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
           }
         }
       }
-      const reply = await (async () => {
+      // Never go silent: if the agent run itself throws (model down, tool
+      // loop blew up), the customer still gets an honest fallback and the
+      // message is ledgered — a task may stumble, it never just dies.
+      let reply: string;
+      try {
+        reply = await (async () => {
         // Slow answer? Act human while the tools work: after 8s with no
         // reply yet, blue-tick + ONE short holding bubble (1:1 only), then
         // the real answer lands on top like a follow-up message.
@@ -2018,7 +2023,12 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
           settled = true;
           if (holdingTimer) clearTimeout(holdingTimer);
         }
-      })();
+        })();
+      } catch (error) {
+        console.error(`Session ${this.userId} agent run failed, sending fallback:`, error);
+        reply =
+          "Sorry about that — that hiccuped on my end. Please say that again and I'll sort it out.";
+      }
       history.append("assistant", reply);
 
       console.log("User:", displayText);
@@ -2039,12 +2049,18 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
         isOwner && !remoteJid.endsWith("@g.us") && !agedReply.startsWith("[agent]")
           ? `[agent] ${agedReply}`
           : agedReply;
-      await this.sendNaturalReply(remoteJid, finalReply, {
-        id: key.id,
-        participant: key.participant,
-        text,
-      });
-      await markProcessed(this.userId, remoteJid, mid, new Date(sentAt));
+      try {
+        await this.sendNaturalReply(remoteJid, finalReply, {
+          id: key.id,
+          participant: key.participant,
+          text,
+        });
+        await markProcessed(this.userId, remoteJid, mid, new Date(sentAt));
+      } catch (error) {
+        // Delivery itself failed (line dropped mid-reply): do NOT ledger it —
+        // catch-up / the next message will retry instead of losing the task.
+        console.error(`Session ${this.userId} reply delivery failed, will retry:`, error);
+      }
       } catch (error) {
         console.error("Message processing failed:", error);
       }

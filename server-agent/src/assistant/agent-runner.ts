@@ -18,7 +18,7 @@ import type {
 import { cleanReply } from "../sessions/format.js";
 import type { HistoryEntry } from "../sessions/conversation-history.js";
 
-const MAX_STEPS = 6;
+const MAX_STEPS = 8;
 
 const client = new AiClient();
 
@@ -374,11 +374,24 @@ export async function handleCustomerMessage(
     });
 
     for (const call of res.tool_calls) {
-      let parsed: Record<string, unknown> = {};
+      let parsed: Record<string, unknown> | null = null;
       try {
-        parsed = JSON.parse(call.function.arguments || "{}");
+        const raw: unknown = JSON.parse(call.function.arguments || "{}");
+        if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+          parsed = raw as Record<string, unknown>;
+        }
       } catch {
-        parsed = {};
+        parsed = null;
+      }
+      if (!parsed) {
+        // Truncated arguments (hit max tokens mid-call): don't execute with
+        // garbage — tell the model to retry shorter, inside the same loop.
+        messages.push({
+          role: "tool",
+          tool_call_id: call.id,
+          content: JSON.stringify({ error: "Your arguments were cut off — retry this call with shorter arguments." }),
+        });
+        continue;
       }
       const result = await executeTool(call.function.name, parsed, ctx);
       if (call.function.name === "send_media" && (result as { sent?: boolean })?.sent === true) {
