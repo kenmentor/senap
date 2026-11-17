@@ -1315,7 +1315,7 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
     imageUrl?: string;
     videoUrl?: string;
     backgroundColor?: string;
-  }): Promise<{ kind: "text" | "image" | "video"; line: string; messageId: string | null }> {
+  }): Promise<{ kind: "text" | "image" | "video"; line: string; audience: number; messageId: string | null }> {
     if (!this.sock) {
       throw new Error(`Session ${this.userId} is not connected`);
     }
@@ -1326,25 +1326,40 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
       throw new Error("`text` or an `imageUrl`/`videoUrl` is required.");
     }
     const line = (this.sock.user as unknown as { id?: string } | null | undefined)?.id ?? "";
+    // Baileys only delivers status to statusJidList — without an audience the
+    // send resolves but reaches zero devices (invisible everywhere).
+    const { buildStatusAudience } = await import("./agent-tools/status-tools.js");
+    const audience = buildStatusAudience(this.contacts, line || undefined);
+    if (audience.length === 0) {
+      throw new Error("Nobody to show the status to yet — this line has no chats.");
+    }
     const proof = (kind: "text" | "image" | "video", sent: unknown) => {
       const key = (sent as { key?: { id?: string } } | null | undefined)?.key;
-      return { kind, line, messageId: key?.id ?? null };
+      return { kind, line, audience: audience.length, messageId: key?.id ?? null };
     };
     const STATUS_JID = "status@broadcast";
     if (videoUrl) {
       if (!/^https?:\/\//i.test(videoUrl)) throw new Error("Only http(s) URLs are allowed.");
-      const sent = await this.sock.sendMessage(STATUS_JID, {
-        video: { url: videoUrl },
-        caption: text || undefined,
-      });
+      const sent = await this.sock.sendMessage(
+        STATUS_JID,
+        {
+          video: { url: videoUrl },
+          caption: text || undefined,
+        },
+        { statusJidList: audience, broadcast: true },
+      );
       return proof("video", sent);
     }
     if (imageUrl) {
       if (!/^https?:\/\//i.test(imageUrl)) throw new Error("Only http(s) URLs are allowed.");
-      const sent = await this.sock.sendMessage(STATUS_JID, {
-        image: { url: imageUrl },
-        caption: text || undefined,
-      });
+      const sent = await this.sock.sendMessage(
+        STATUS_JID,
+        {
+          image: { url: imageUrl },
+          caption: text || undefined,
+        },
+        { statusJidList: audience, broadcast: true },
+      );
       return proof("image", sent);
     }
     const bg = (input.backgroundColor ?? "#00a884").trim();
@@ -1354,6 +1369,8 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
       {
         backgroundColor: /^#[0-9a-fA-F]{6}$/.test(bg) ? bg : "#00a884",
         font: 0,
+        statusJidList: audience,
+        broadcast: true,
       },
     );
     return proof("text", sent);
