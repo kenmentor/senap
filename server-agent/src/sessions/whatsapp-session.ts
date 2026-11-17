@@ -986,15 +986,17 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
   private lastHolding = new Map<string, number>();
 
   /**
-   * Short human stall lines for slow answers. Plain shopkeeper talk — never
-   * backend narration ("searching", "database", "let me check stock" are
-   * banned by the house style and would smell like a bot).
+   * Short professional stall lines for slow answers. Plain staff talk — never
+   * backend narration ("searching", "database", "checking stock" are banned
+   * by the house style and would smell like a bot). The line is also added
+   * to conversation history, so the model sees it and continues naturally
+   * instead of re-greeting (see the holding-line note in the system prompt).
    */
   private static readonly HOLDING_LINES = [
-    "On am — give me one minute, I dey confirm something for you.",
-    "Hold on small, make I check am well for you.",
-    "Got you — one sec, I dey put everything together.",
-    "Seen — just dey round am up for you now.",
+    "On it — please give me a moment while I confirm that for you.",
+    "Please hold on a moment, I'm checking it now.",
+    "Got it — one moment while I put everything together.",
+    "Thanks for your patience — almost done, just rounding it up for you.",
   ];
 
   /**
