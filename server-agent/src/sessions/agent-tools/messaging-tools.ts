@@ -1,17 +1,17 @@
 import type { ToolDefinition } from "./tool-types.js";
 import { toolArgs } from "./tool-types.js";
-import { loadBusiness, normalizeJid } from "./store.js";
+import { loadBusiness, nameScore, normalizeJid } from "./store.js";
 
 export const messagingTools: ToolDefinition[] = [
   {
     name: "send_whatsapp_message",
     description:
-      "OWNER ONLY. Send a WhatsApp message to a DIFFERENT number than the current chat (e.g. message a supplier or teammate). The current customer's reply is sent automatically — do not use this for the normal reply.",
+      "OWNER ONLY. Send a WhatsApp message to a DIFFERENT number than the current chat: a phone number, a full JID, or a KNOWN CONTACT NAME ('Amara' resolves itself — no separate lookup needed). Use this when the owner says 'chat him/her up', 'message Amara', 'tell Musa...'. The current customer's reply is sent automatically — do not use this for the normal reply. After sending, confirm to the owner WHO got WHAT (quote the name and first line).",
     scope: "owner",
     parameters: {
       type: "object",
       properties: {
-        to: { type: "string", description: "Phone number (e.g. '+234 801 234 5678') or full JID." },
+        to: { type: "string", description: "Contact name ('Amara'), phone number ('+234 801 234 5678'), or full JID." },
         text: { type: "string", description: "Message text." },
       },
       required: ["to", "text"],
@@ -21,10 +21,30 @@ export const messagingTools: ToolDefinition[] = [
       const to = toolArgs.asString(args.to).trim();
       const text = toolArgs.asString(args.text).trim();
       if (!to || !text) return { error: "`to` and `text` are required." };
+      // Resolve: JID/phone passes straight through; a name fuzzy-matches contacts.
+      let jid = "";
+      let resolvedName = "";
       try {
-        const jid = normalizeJid(to);
+        jid = normalizeJid(to);
+      } catch {
+        let best = 0;
+        for (const [cJid, c] of ctx.contacts) {
+          if (cJid.endsWith("@g.us")) continue;
+          const score = Math.max(nameScore(c.name, to), nameScore(cJid, to));
+          if (score > best) {
+            best = score;
+            jid = cJid;
+            resolvedName = c.name;
+          }
+        }
+        if (!jid || best <= 0) {
+          return { error: `I don't know "${to}" — no contact matches. Use resolve_contact to check the spelling, or give me the number.` };
+        }
+      }
+      if (!ctx.sock) return { error: "WhatsApp is not connected." };
+      try {
         await ctx.sendText(jid, text);
-        return { sent: true, to: jid };
+        return { sent: true, to: jid, ...(resolvedName ? { name: resolvedName } : {}) };
       } catch (e) {
         return { error: e instanceof Error ? e.message : "Send failed." };
       }
