@@ -99,6 +99,7 @@ export default function GroupsPage() {
   const [fChatty, setFChatty] = useState("0.5");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [disabling, setDisabling] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -271,6 +272,8 @@ export default function GroupsPage() {
   };
 
   const disableAgent = async (jid: string) => {
+    if (disabling) return;
+    setDisabling(jid);
     try {
       await fetch(`/api/agent/sessions/${encodeURIComponent(account)}/group-agent`, {
         method: "DELETE",
@@ -279,6 +282,7 @@ export default function GroupsPage() {
       }).catch(() => null);
     } finally {
       setStatuses((v) => ({ ...v, [jid]: { configured: true, enabled: false } }));
+      setDisabling(null);
     }
   };
 
@@ -314,10 +318,11 @@ export default function GroupsPage() {
           )}
           <button
             onClick={load}
-            className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-[12.5px] font-semibold"
+            disabled={loading}
+            className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-[12.5px] font-semibold disabled:opacity-50"
             style={{ background: "rgba(255,255,255,0.06)", color: "#e9edef", border: "1px solid rgba(255,255,255,0.1)" }}
           >
-            <RefreshCw size={14} /> Refresh
+            <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> {loading ? "Loading…" : "Refresh"}
           </button>
         </div>
       </div>
@@ -400,10 +405,11 @@ export default function GroupsPage() {
                           </span>
                           <button
                             onClick={() => disableAgent(g.jid)}
-                            className="ml-auto flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold"
+                            disabled={disabling === g.jid}
+                            className="ml-auto flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50"
                             style={{ background: "rgba(230,106,106,0.1)", color: "#e66a6a", border: "1px solid rgba(230,106,106,0.3)" }}
                           >
-                            <Power size={13} /> Switch off
+                            <Power size={13} /> {disabling === g.jid ? "Switching off…" : "Switch off"}
                           </button>
                         </>
                       ) : (

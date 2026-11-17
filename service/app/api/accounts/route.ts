@@ -31,12 +31,17 @@ export async function POST(req: Request) {
     await dbConnect();
     const b = await req.json();
     if (!b?.number?.trim()) return NextResponse.json({ error: "Number is required." }, { status: 400 });
+    const engineId = String(b.engineId || b.number).trim();
+    // Idempotent: a double-clicked "Done" (or a retried request) must not
+    // create two records. Same owner + engineId reuses the existing row.
+    const existing = await LinkedAccount.findOne({ ownerId: me.id, engineId }).lean();
+    if (existing) return NextResponse.json(docId(existing), { status: 200 });
     const doc = await LinkedAccount.create({
       ownerId: me.id,
       number: String(b.number).trim(),
       name: String(b.name || "Nala Phones").trim() || "Nala Phones",
       linkedAt: String(b.linkedAt || "Today"),
-      engineId: String(b.engineId || b.number).trim(),
+      engineId,
       unlinked: Boolean(b.unlinked ?? false)
     });
     return NextResponse.json(docId(doc.toObject()), { status: 201 });

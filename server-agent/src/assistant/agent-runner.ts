@@ -1,6 +1,7 @@
 import AiClient from "./ai-client.js";
 import { executeTool, toolSchemas } from "../sessions/agent-tools/index.js";
 import { takeDueReminders } from "../sessions/agent-tools/todo.js";
+import { ModelOutageError } from "../sessions/model-outage.js";
 import {
   isOwnerJid,
   isSelfJid,
@@ -406,6 +407,10 @@ export async function handleCustomerMessage(
 
   const tools = toolSchemas();
   let mediaSent = false;
+  // Set the moment a MODEL call itself throws (timeout, 429 quota, bad
+  // token, 5xx). Anything else (tool errors, empty content) is not an
+  // outage and keeps the old human fallback below.
+  let outage: unknown = null;
 
   for (let step = 0; step < MAX_STEPS; step++) {
     let res: Awaited<ReturnType<AiClient["chat"]>>;
@@ -413,6 +418,7 @@ export async function handleCustomerMessage(
       res = await client.chat(messages, tools);
     } catch (e) {
       console.error("Model call failed:", e);
+      outage = e;
       break;
     }
 
@@ -467,6 +473,10 @@ export async function handleCustomerMessage(
   }
 
   const persona = await loadPersona(req.userId).catch(() => null);
+  // Model outage: NEVER answer with a chatty fallback — that either leaks
+  // the machinery ("trouble on my end") or pretends all is well. Throw so the
+  // caller stays silent toward the customer and files an owner alert instead.
+  if (outage) throw new ModelOutageError(outage);
   return (
     persona?.greeting ||
     "Hello! I had a little trouble just now — please say that again."

@@ -181,6 +181,9 @@ export default function LinkPage() {
   const [agentOnline, setAgentOnline] = useState(true);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  /** In-flight guards: double-clicks while loading must never fire twice. */
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const [startBusy, setStartBusy] = useState(false);
   const [pendingAction, setPendingAction] = useState<{ kind: "unlink" | "delete"; account: Account } | null>(null);
   /** Just-linked line waiting for its block/allow choice. */
   const [freshLinked, setFreshLinked] = useState<string | null>(null);
@@ -346,6 +349,7 @@ export default function LinkPage() {
   };
 
   const startLinking = async () => {
+    if (startBusy) return;
     const id = userId.trim();
     if (!id) {
       setError("Enter a name for this device first.");
@@ -365,6 +369,7 @@ export default function LinkPage() {
     setError(null);
     setQr(null);
     setPhase("starting");
+    setStartBusy(true);
     await markStartedHere(id);
     try {
       const res = await fetch(`/api/agent/sessions/${encodeURIComponent(id)}/start`, { method: "POST" });
@@ -388,6 +393,8 @@ export default function LinkPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not reach the agent. Is it running on :3001?");
       setPhase("error");
+    } finally {
+      setStartBusy(false);
     }
   };
 
@@ -528,6 +535,7 @@ export default function LinkPage() {
   };
 
   const confirmLinked = async () => {
+    if (confirmBusy) return;
     const id = userId.trim() || "my-shop";
     if (relinkTarget === null && accounts.some((a) => engineIdOf(a).toLowerCase() === id.toLowerCase())) {
       setActionError(`"${id}" is already linked — pick a different device name.`);
@@ -535,6 +543,7 @@ export default function LinkPage() {
     }
     const body = { number: id, name: "Nala Phones", linkedAt: "Today", engineId: id, unlinked: false };
     setActionError(null);
+    setConfirmBusy(true);
     try {
       const res = await fetch("/api/accounts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (!res.ok) {
@@ -560,6 +569,8 @@ export default function LinkPage() {
       void loadFresh(linkedId);
     } catch (e) {
       setActionError(e instanceof Error ? e.message : "Could not save the linked account.");
+    } finally {
+      setConfirmBusy(false);
     }
   };
 
@@ -928,15 +939,15 @@ export default function LinkPage() {
 
             <div className="mt-5 flex flex-col gap-2.5">
               {phase === "connected" ? (
-                <button onClick={confirmLinked} className="flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl text-[15px] font-semibold transition active:scale-[0.99]" style={{ background: "#00a884", color: "#04241d" }}>
-                  Done <ArrowRight size={16} strokeWidth={2.5} />
+                <button onClick={confirmLinked} disabled={confirmBusy} className="flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl text-[15px] font-semibold transition active:scale-[0.99] disabled:opacity-50" style={{ background: "#00a884", color: "#04241d" }}>
+                  {confirmBusy ? "Saving…" : <>Done <ArrowRight size={16} strokeWidth={2.5} /></>}
                 </button>
               ) : linkMode === "code" ? (
                 <>
                   {pairCode ? (
                     <>
-                      <button onClick={confirmLinked} className="flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl text-[15px] font-semibold transition active:scale-[0.99]" style={{ background: "#00a884", color: "#04241d" }}>
-                        I&apos;ve entered the code <ArrowRight size={16} strokeWidth={2.5} />
+                      <button onClick={confirmLinked} disabled={confirmBusy} className="flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl text-[15px] font-semibold transition active:scale-[0.99] disabled:opacity-50" style={{ background: "#00a884", color: "#04241d" }}>
+                        {confirmBusy ? "Saving…" : <>I&apos;ve entered the code <ArrowRight size={16} strokeWidth={2.5} /></>}
                       </button>
                       <button onClick={requestPairCode} disabled={pairBusy} className="flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl text-[13px] font-medium transition active:bg-white/10 disabled:opacity-50" style={{ border: "1px solid rgba(255,255,255,0.1)", color: "#aebac1" }}>
                         <RefreshCw size={14} className={pairBusy ? "animate-spin" : ""} /> {pairBusy ? "Getting code…" : "New code"}
@@ -949,16 +960,16 @@ export default function LinkPage() {
                   )}
                 </>
               ) : phase === "idle" || phase === "error" ? (
-                <button onClick={startLinking} className="flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl text-[15px] font-semibold transition active:scale-[0.99]" style={{ background: "#00a884", color: "#04241d" }}>
-                  <QrCode size={16} strokeWidth={2.5} /> Start linking
+                <button onClick={startLinking} disabled={startBusy} className="flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl text-[15px] font-semibold transition active:scale-[0.99] disabled:opacity-50" style={{ background: "#00a884", color: "#04241d" }}>
+                  <QrCode size={16} strokeWidth={2.5} /> {startBusy ? "Starting…" : "Start linking"}
                 </button>
               ) : (
                 <>
-                  <button onClick={confirmLinked} className="flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl text-[15px] font-semibold transition active:scale-[0.99]" style={{ background: "#00a884", color: "#04241d" }}>
-                    I&apos;ve scanned the code <ArrowRight size={16} strokeWidth={2.5} />
+                  <button onClick={confirmLinked} disabled={confirmBusy} className="flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl text-[15px] font-semibold transition active:scale-[0.99] disabled:opacity-50" style={{ background: "#00a884", color: "#04241d" }}>
+                    {confirmBusy ? "Saving…" : <>I&apos;ve scanned the code <ArrowRight size={16} strokeWidth={2.5} /></>}
                   </button>
-                  <button onClick={startLinking} className="flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl text-[13px] font-medium transition active:bg-white/10" style={{ border: "1px solid rgba(255,255,255,0.1)", color: "#aebac1" }}>
-                    <RefreshCw size={14} /> Refresh code
+                  <button onClick={startLinking} disabled={startBusy} className="flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl text-[13px] font-medium transition active:bg-white/10 disabled:opacity-50" style={{ border: "1px solid rgba(255,255,255,0.1)", color: "#aebac1" }}>
+                    <RefreshCw size={14} className={startBusy ? "animate-spin" : ""} /> {startBusy ? "Starting…" : "Refresh code"}
                   </button>
                 </>
               )}

@@ -14,7 +14,8 @@
     "build": "npm install --include=dev --no-audit --no-fund && tsc",
     "start": "node dist/src/server.js",
     "typecheck": "tsc --noEmit",
-    "test": "tsc --noEmit"
+    "test": "tsc --noEmit",
+    "test:cloudflare": "tsx src/scripts/test-cloudflare.ts"
   },
   "dependencies": {
     "@hapi/boom": "^10.0.1",

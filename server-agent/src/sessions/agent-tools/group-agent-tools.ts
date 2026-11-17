@@ -33,6 +33,7 @@ export function buildEngagementInstruction(input: {
     `Rules, in order: 1) FIRST call check_group_quota for this group — if over the daily limit, do nothing this round. ` +
     `2) Never repeat anything from the last 20 messages. ` +
     `3) If the last 2-3 messages are all yours, stay silent (a reaction is enough). ` +
+    `To stay silent, reply with exactly [SILENT] and nothing else — the server skips the send. ` +
     `4) Sound human and brief — no AI talk, no lectures, no hashtags. ` +
     `Hard cap: ${input.maxPerDay} engagement messages per day.` +
     (input.duty ? ` Extra duty: ${input.duty}` : "")

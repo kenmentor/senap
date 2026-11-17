@@ -115,6 +115,25 @@ export async function enqueueTask(input: EnqueueTaskInput): Promise<string> {
   const text = input.text.trim().slice(0, MAX_TEXT);
   if (!text) throw new Error("Task text is empty.");
   if (!input.userId.trim() || !input.chatJid.trim()) throw new Error("userId and chatJid are required.");
+  // Double-push guard: a retried webhook / double-clicked dashboard button
+  // must not create two identical jobs. Same scope + kind + exact text
+  // pending within the last 60s reuses the existing job id.
+  try {
+    const recent = await JobModel.findOne({
+      userId: input.userId,
+      chatJid: input.chatJid,
+      kind: input.kind,
+      text,
+      status: "pending",
+      createdAt: { $gte: new Date(Date.now() - 60_000) },
+    })
+      .select("_id")
+      .lean();
+    const existingId = (recent as { _id?: unknown } | null)?._id;
+    if (existingId) return String(existingId);
+  } catch {
+    /* dedupe is best-effort — fall through to insert */
+  }
   const doc = await JobModel.create({
     userId: input.userId,
     chatJid: input.chatJid,

@@ -34,6 +34,8 @@ interface JobRow {
   text: string;
   runAt: Date;
   status: string;
+  repeatKey?: string;
+  lastError?: string;
   createdAt: Date;
 }
 
@@ -49,6 +51,8 @@ const JobView =
         text: String,
         runAt: Date,
         status: String,
+        repeatKey: String,
+        lastError: String,
         createdAt: Date,
       },
       { collection: "agentjobs" },
@@ -209,6 +213,10 @@ export async function GET() {
   const toolList = Array.from(toolTotals.entries()).map(([name, count]) => ({ name, count }));
 
   let scheduled: unknown[] = [];
+  // Model-outage alerts the agent filed while staying silent to customers.
+  // Any status (pending → owner DM still queued; done → delivered) so the
+  // failure stays visible for days, not just until dispatch.
+  let alerts: unknown[] = [];
   // NOTE: the agent's /sessions/stats is global across owners — never use it
   // here. localStats computes the same numbers scoped to my lines.
   let stats: Stats | null = null;
@@ -226,6 +234,22 @@ export async function GET() {
       text: d.text,
       runAt: d.runAt instanceof Date ? d.runAt.toISOString() : String(d.runAt),
     }));
+    const outageDocs = await JobView.find({
+      userId: { $in: lines },
+      repeatKey: { $regex: "^model-outage:" },
+      createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60_000) },
+    })
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .lean();
+    alerts = outageDocs.map((d) => ({
+      id: String(d._id),
+      userId: d.userId,
+      text: d.text,
+      status: d.status,
+      runAt: d.runAt instanceof Date ? d.runAt.toISOString() : String(d.runAt),
+      createdAt: d.createdAt instanceof Date ? d.createdAt.toISOString() : String(d.createdAt ?? ""),
+    }));
     stats = await localStats(lines);
   } catch {
     /* DB offline — chats/tools still render; stats fall back on the client */
@@ -239,6 +263,7 @@ export async function GET() {
     agentOnline: recent !== null,
     chats,
     scheduled,
+    alerts,
     tools: toolList,
     stats: stats
       ? [

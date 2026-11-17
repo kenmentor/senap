@@ -3,11 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { Plus, RefreshCw, Check, MessageCircle, Clock3, Zap, X, Sparkles, Send, ChevronDown } from "lucide-react";
+import { Plus, RefreshCw, Check, MessageCircle, Clock3, Zap, X, Sparkles, Send, ChevronDown, AlertTriangle } from "lucide-react";
 import { lowCount, statusOf, thumbFor, LOW_AT, type Item } from "@/lib/demo/catalog";
 
 type RecentChat = { userId: string; jid: string; name: string; imgUrl?: string | null; text: string; fromMe: boolean; ts: number; messages: number };
 type ScheduledJob = { id: string; userId: string; chat: string; kind: string; text: string; runAt: string };
+type ModelAlert = { id: string; userId: string; text: string; status: string; runAt: string; createdAt: string };
 type ToolUse = { name: string; count: number };
 type StatCard = { label: string; value: string; delta: string };
 type TrafficPoint = { day: string; messages: number };
@@ -164,6 +165,8 @@ export default function DashboardHome() {
   const [dbDown, setDbDown] = useState(false);
   const [chats, setChats] = useState<RecentChat[]>([]);
   const [scheduled, setScheduled] = useState<ScheduledJob[]>([]);
+  const [alerts, setAlerts] = useState<ModelAlert[]>([]);
+  const [dismissedAlerts, setDismissedAlerts] = useState<Set<string>>(new Set());
   const [tools, setTools] = useState<ToolUse[]>([]);
   const [agentOnline, setAgentOnline] = useState(true);
   const [stats, setStats] = useState<StatCard[] | null>(null);
@@ -209,6 +212,17 @@ export default function DashboardHome() {
         rawTools.map((t: { name?: unknown; count?: unknown }) => ({
           name: String(t?.name ?? "unknown"),
           count: Number(t?.count ?? 0),
+        })),
+      );
+      const rawAlerts = Array.isArray(data.alerts) ? data.alerts : [];
+      setAlerts(
+        rawAlerts.map((a: { id?: unknown; userId?: unknown; text?: unknown; status?: unknown; runAt?: unknown; createdAt?: unknown }) => ({
+          id: String(a?.id ?? `alert-${Math.random().toString(36).slice(2)}`),
+          userId: String(a?.userId ?? ""),
+          text: String(a?.text ?? ""),
+          status: String(a?.status ?? ""),
+          runAt: String(a?.runAt ?? ""),
+          createdAt: String(a?.createdAt ?? ""),
         })),
       );
       setAgentOnline(data.agentOnline !== false);
@@ -303,6 +317,31 @@ export default function DashboardHome() {
           <RefreshCw size={16} className={refreshing ? "animate-spin" : ""} />
         </button>
       </div>
+      {/* Model-outage alerts — the agent stayed silent to customers and
+          filed these for you instead. Dismiss is local; the row stays in
+          "Lined up" until its owner DM delivers. */}
+      {alerts.filter((a) => !dismissedAlerts.has(a.id)).map((a) => (
+        <div key={a.id} className="mt-3 flex items-start gap-3 rounded-2xl p-4" style={{ background: "rgba(230,106,106,0.08)", border: "1px solid rgba(230,106,106,0.35)" }}>
+          <AlertTriangle size={17} className="mt-0.5 shrink-0" style={{ color: "#e66a6a" }} />
+          <div className="min-w-0 flex-1">
+            <p className="text-[12px] font-bold uppercase" style={{ color: "#e66a6a", letterSpacing: "0.06em" }}>
+              Model outage{a.status === "done" ? " · owner notified" : " · notifying owner"}
+            </p>
+            <p className="mt-1 break-words text-[13px] leading-snug" style={{ color: "#e9edef" }}>{a.text}</p>
+            {a.createdAt ? (
+              <p className="mt-1 text-[11.5px]" style={{ color: "#8a949b" }}>{chatTimeAgo(new Date(a.createdAt).getTime())}</p>
+            ) : null}
+          </div>
+          <button
+            onClick={() => setDismissedAlerts((v) => new Set(v).add(a.id))}
+            aria-label="Dismiss alert"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition hover:bg-white/10"
+            style={{ color: "#8a949b" }}
+          >
+            <X size={14} />
+          </button>
+        </div>
+      ))}
       {/* 3 stats — live from /api/activity, fallback while offline.
           Compact 3-across row on phones (native dashboard feel), roomy cards on desktop. */}
       <div className="grid grid-cols-3 gap-2 sm:gap-3.5">

@@ -15,6 +15,7 @@ import ConversationHistory from "./conversation-history.js";
 import { isChatAllowed } from "./chat-access.js";
 import { isSelfJid } from "./agent-tools/store.js";
 import { handleCustomerMessage } from "../assistant/agent-runner.js";
+import { ModelOutageError, reportModelOutage } from "./model-outage.js";
 import type {
   BufferedMessage,
   GroupContext,
@@ -1633,6 +1634,37 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
       try {
         this.touch(chatJid);
         await this.ensureHistory(chatJid);
+        // Dedupe ledger: two drains (timer + change-stream, or two instances
+        // racing) must never deliver the same scheduled text twice.
+        const normForDedupe = (s: string): string =>
+          s
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+        const isGroup = chatJid.endsWith("@g.us");
+        // Server-side quota guard: the model is told to call
+        // check_group_quota first, but if it skips the tool (or the quota
+        // tripped since), the send below would spam the group anyway.
+        // Never trust the model for caps — enforce here.
+        if (isGroup) {
+          try {
+            const { getGroupAgent } = await import("./agent-tools/group-agent-store.js");
+            const { countMessages } = await import("./chat-memory.js");
+            const cfg = await getGroupAgent(this.userId, chatJid).catch(() => null);
+            if (cfg?.enabled) {
+              const day = new Date();
+              day.setHours(0, 0, 0, 0);
+              const sentToday = await countMessages(this.userId, chatJid, "assistant", day).catch(() => 0);
+              if (sentToday >= (cfg.maxPerDay ?? 4)) {
+                console.log(`[scheduled-task] "${chatJid}" over daily cap (${sentToday}/${cfg.maxPerDay}) — skipping send.`);
+                return "silent-over-quota";
+              }
+            }
+          } catch {
+            /* quota check is best-effort — the reply-time checks below still apply */
+          }
+        }
         const sendText = async (to: string, message: string) => {
           await sendWithTyping(psock, to, message);
           this.logOutgoing(to, message);
@@ -1664,9 +1696,64 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
           scheduledTask: { id: taskId, instruction: safeInstruction },
           group: await this.groupContext(chatJid).catch(() => null),
         });
+        // The agent can vote to stay silent (over quota, nothing new, last
+        // messages are all ours). A silent vote must NEVER hit WhatsApp —
+        // otherwise "stay silent" still spams the group.
+        const silentVote = /^\s*\[?\s*silent(\s*[-_:]\s*.*)?\s*\]?\s*$/i.test(reply.trim());
+        if (silentVote || !reply.trim()) {
+          console.log(`[scheduled-task] "${chatJid}" voted silent — skipping send.`);
+          return "silent";
+        }
+        // Anti-repeat: never send the same (or near-same) text twice in a
+        // row. The model's "never repeat" instruction is advisory; enforce it
+        // against the last few outgoing messages (24h window).
+        try {
+          const log = this.messageLog.get(chatJid) ?? [];
+          const normReply = normForDedupe(reply);
+          const now = Date.now();
+          for (let i = log.length - 1; i >= 0 && i >= log.length - 6; i--) {
+            const e = log[i];
+            if (!e?.fromMe || now - e.ts > 24 * 60 * 60_000) continue;
+            const normPrev = normForDedupe(e.text);
+            if (!normPrev || !normReply) continue;
+            if (
+              normPrev === normReply ||
+              (normReply.length > 40 && normPrev.startsWith(normReply.slice(0, 60))) ||
+              (normPrev.length > 40 && normReply.startsWith(normPrev.slice(0, 60)))
+            ) {
+              console.log(`[scheduled-task] "${chatJid}" repeat of a recent message — skipping send.`);
+              return "silent-repeat";
+            }
+          }
+        } catch {
+          /* anti-repeat is best-effort */
+        }
         await this.sendNaturalReply(chatJid, reply);
         return reply;
       } catch (error) {
+        // Model outage on a scheduled run: stay silent (no customer-facing
+        // bubble that would leak the machinery) and file ONE owner alert
+        // instead. Marking the job done skips this round; the recurrence
+        // chain continues, and the owner can re-queue from the alert.
+        if (error instanceof ModelOutageError) {
+          let chatLabel = chatJid.split("@")[0];
+          try {
+            const g = await this.groupContext(chatJid).catch(() => null);
+            if (g?.subject) chatLabel = g.subject;
+            const cName = this.contacts.get(chatJid)?.name;
+            if (cName && cName !== "unknown") chatLabel = cName;
+          } catch {
+            /* label best-effort */
+          }
+          await reportModelOutage({
+            userId: this.userId,
+            chatJid,
+            chatLabel,
+            cause: error,
+            selfJid: this.ownForms()[0] ?? null,
+          }).catch(() => {});
+          return "silent-model-outage";
+        }
         console.error("Scheduled task failed:", error);
         throw error;
       }
@@ -2469,6 +2556,29 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
         }
         })();
       } catch (error) {
+        // Model outage (dead token, quota exhausted, timeout): stay SILENT
+        // toward the customer — no fallback bubble, no receipts, nothing that
+        // hints a model is behind the line. Ledger the message so catch-up
+        // never retries it, and file one owner alert instead. The user text
+        // is already in history, so context survives for when the model is
+        // back; the owner alert carries the snippet for a manual follow-up.
+        if (error instanceof ModelOutageError) {
+          console.error(`Session ${this.userId} model outage, staying silent:`, error.shortCause);
+          await markProcessed(this.userId, remoteJid, mid, new Date(sentAt));
+          const chatLabel = isGroupChat
+            ? (group?.subject ?? remoteJid.split("@")[0])
+            : (this.contacts.get(remoteJid)?.name ?? remoteJid.split("@")[0]);
+          await reportModelOutage({
+            userId: this.userId,
+            chatJid: remoteJid,
+            chatLabel,
+            senderLabel: senderName || undefined,
+            customerText: incomingText,
+            cause: error,
+            selfJid: this.ownForms()[0] ?? null,
+          }).catch(() => {});
+          return;
+        }
         console.error(`Session ${this.userId} agent run failed, sending fallback:`, error);
         reply =
           "Sorry about that — that hiccuped on my end. Please say that again and I'll sort it out.";
