@@ -12,8 +12,113 @@ const MAX_STAGGER_SEC = 300;
 const DEFAULT_STAGGER_SEC = 45;
 // WhatsApp guideline guardrail: cap bulk sends per account per day (env-tunable).
 // Keeps a new/warm number far from spam thresholds; split bigger campaigns across days.
-const DAILY_CAP = Math.max(1, Number(process.env.BROADCAST_DAILY_CAP ?? 250) || 250);
+export const DAILY_BULK_CAP = Math.max(1, Number(process.env.BROADCAST_DAILY_CAP ?? 250) || 250);
 const STOP_FOOTER = "\n\nReply STOP to opt out.";
+
+export interface StaggeredRecipient {
+  /** Destination JID (already normalized). */
+  jid: string;
+  /** Full message body for THIS recipient (personalized text allowed). */
+  text: string;
+}
+
+export interface StaggeredResult {
+  queued: number;
+  queuedJids: string[];
+  skippedBlocked: number;
+  deferredForCap: number;
+  dailyCap: number;
+  staggerSec: number;
+  firstAt: string;
+  lastAt: string;
+}
+
+/**
+ * Shared ban-safe bulk engine: block-list respect, STOP footer, daily cap,
+ * staggered durable queue, immediate wake. Used by send_broadcast (one text
+ * for all) and the campaign planner (personalized text per recipient).
+ */
+export async function queueStaggeredSends(opts: {
+  userId: string;
+  createdBy: string;
+  recipients: StaggeredRecipient[];
+  staggerSec?: number;
+  /** Groups this batch so it can be tracked/cancelled together (e.g. campaign:<id>). */
+  batchKey?: string;
+}): Promise<StaggeredResult> {
+  await ensureMongo();
+  const staggerSec = Math.min(
+    MAX_STAGGER_SEC,
+    Math.max(MIN_STAGGER_SEC, Math.round(opts.staggerSec ?? DEFAULT_STAGGER_SEC)),
+  );
+  const dayStart = new Date();
+  dayStart.setHours(0, 0, 0, 0);
+  const sentToday = await JobModel.countDocuments({
+    userId: opts.userId,
+    kind: "send",
+    createdAt: { $gte: dayStart },
+  }).catch(() => 0);
+  const empty: StaggeredResult = {
+    queued: 0,
+    queuedJids: [],
+    skippedBlocked: 0,
+    deferredForCap: opts.recipients.length,
+    dailyCap: DAILY_BULK_CAP,
+    staggerSec,
+    firstAt: new Date().toISOString(),
+    lastAt: new Date().toISOString(),
+  };
+  if (sentToday >= DAILY_BULK_CAP) return empty;
+  const room = Math.max(0, DAILY_BULK_CAP - sentToday);
+  const capped = opts.recipients.slice(0, room);
+  const deferred = opts.recipients.length - capped.length;
+  let skippedBlocked = 0;
+  const queuedJids: string[] = [];
+  const now = Date.now();
+  for (let i = 0; i < capped.length; i++) {
+    const { jid, text } = capped[i];
+    // Respect the dashboard block list — never message someone blocked.
+    if (!(await isChatAllowed(opts.userId, jid))) {
+      skippedBlocked++;
+      continue;
+    }
+    const body = /stop/i.test(text) ? text : `${text}${STOP_FOOTER}`;
+    await JobModel.create({
+      userId: opts.userId,
+      chatJid: jid,
+      createdBy: opts.createdBy,
+      createdByIsOwner: true,
+      kind: "send",
+      text: body,
+      runAt: new Date(now + i * staggerSec * 1000),
+      status: "pending",
+      attempts: 0,
+      lastError: "",
+      repeatKey: opts.batchKey ?? "",
+    });
+    queuedJids.push(jid);
+  }
+  // Event-interrupt: first (due-now) sends dispatch immediately, the rest
+  // fire on their exact timers — no polling.
+  try {
+    const m = await import("../task-queue.js");
+    m.wake();
+  } catch {
+    /* dispatcher re-arms on its own */
+  }
+  const firstAt = new Date(now).toISOString();
+  const lastAt = new Date(now + Math.max(0, queuedJids.length - 1) * staggerSec * 1000).toISOString();
+  return {
+    queued: queuedJids.length,
+    queuedJids,
+    skippedBlocked,
+    deferredForCap: deferred,
+    dailyCap: DAILY_BULK_CAP,
+    staggerSec,
+    firstAt,
+    lastAt,
+  };
+}
 
 /**
  * WhatsApp-native broadcast, owner only.
@@ -59,10 +164,7 @@ export const broadcastTools: ToolDefinition[] = [
       const text = toolArgs.asString(args.text).trim().slice(0, MAX_TEXT);
       if (!text) return { error: "Broadcast text is empty." };
       const audience = toolArgs.asString(args.audience, "listed").trim().toLowerCase();
-      const staggerSec = Math.min(
-        MAX_STAGGER_SEC,
-        Math.max(MIN_STAGGER_SEC, Math.round(toolArgs.asNumber(args.staggerSec, DEFAULT_STAGGER_SEC))),
-      );
+      const staggerSec = toolArgs.asNumber(args.staggerSec, DEFAULT_STAGGER_SEC);
       const tag = toolArgs.asString(args.tag).trim().slice(0, 60);
 
       // Resolve recipients.
@@ -88,10 +190,11 @@ export const broadcastTools: ToolDefinition[] = [
         };
       }
 
-      // Normalize, dedupe, exclude self + blocked chats.
+      // Normalize, dedupe, exclude self + status.
       const selfJid = ctx.sock?.user?.id ?? "";
       const seen = new Set<string>();
-      const targets: string[] = [];
+      const withTag = tag ? `[${tag}] ${text}` : text;
+      const recipients: StaggeredRecipient[] = [];
       for (const r of raw) {
         let jid: string;
         try {
@@ -101,83 +204,32 @@ export const broadcastTools: ToolDefinition[] = [
         }
         if (jid === selfJid || jid === "status@broadcast" || seen.has(jid)) continue;
         seen.add(jid);
-        targets.push(jid);
-        if (targets.length >= MAX_RECIPIENTS) break;
+        recipients.push({ jid, text: withTag });
+        if (recipients.length >= MAX_RECIPIENTS) break;
       }
-      if (targets.length === 0) return { error: "No valid recipients after cleanup." };
+      if (recipients.length === 0) return { error: "No valid recipients after cleanup." };
 
-      // Daily account guardrail: count today's bulk sends for this session.
-      const dayStart = new Date();
-      dayStart.setHours(0, 0, 0, 0);
-      const sentToday = await JobModel.countDocuments({
+      const res = await queueStaggeredSends({
         userId: ctx.userId,
-        kind: "send",
-        createdAt: { $gte: dayStart },
-      }).catch(() => 0);
-      if (sentToday >= DAILY_CAP) {
-        return {
-          error: `Daily broadcast cap reached (${sentToday}/${DAILY_CAP} sends today). Split the rest across days — this pacing keeps the number safe from bans.`,
-        };
-      }
-      const room = Math.min(targets.length, Math.max(0, DAILY_CAP - sentToday));
-      if (room <= 0) {
-        return { error: `Daily broadcast cap reached (${DAILY_CAP}/day). Try again tomorrow.` };
-      }
-      const capped = targets.slice(0, room);
-      const deferred = targets.length - capped.length;
-
-      let skippedBlocked = 0;
-      const queued: string[] = [];
-      const now = Date.now();
-      for (let i = 0; i < capped.length; i++) {
-        const jid = capped[i];
-        // Respect the dashboard block list — never blast someone blocked.
-        if (!(await isChatAllowed(ctx.userId, jid))) {
-          skippedBlocked++;
-          continue;
-        }
-        // Guideline compliance: every blast carries an opt-out line (unless the
-        // owner already wrote their own STOP wording).
-        const withTag = tag ? `[${tag}] ${text}` : text;
-        const body = /stop/i.test(withTag) ? withTag : `${withTag}${STOP_FOOTER}`;
-        await JobModel.create({
-          userId: ctx.userId,
-          chatJid: jid,
-          createdBy: ctx.customerJid,
-          createdByIsOwner: true,
-          kind: "send",
-          text: body,
-          runAt: new Date(now + i * staggerSec * 1000),
-          status: "pending",
-          attempts: 0,
-          lastError: "",
-        });
-        queued.push(jid);
-      }
-
-      // Event-interrupt: first (due-now) sends dispatch immediately, the rest
-      // fire on their exact timers — no polling.
-      try {
-        const m = await import("../task-queue.js");
-        m.wake();
-      } catch {
-        /* dispatcher re-arms on its own */
-      }
-
-      if (queued.length === 0) {
-        return { error: `All ${capped.length} recipient(s) are blocked — nothing queued.`, skippedBlocked };
-      }
-      const firstAt = new Date(now).toISOString();
-      const lastAt = new Date(now + (queued.length - 1) * staggerSec * 1000).toISOString();
-      return {
-        queued: queued.length,
-        skippedBlocked,
-        deferredForCap: deferred,
-        dailyCap: DAILY_CAP,
+        createdBy: ctx.customerJid,
+        recipients,
         staggerSec,
-        firstAt,
-        lastAt,
-        note: `Staggered privately like a native broadcast — last delivery ${lastAt}. Track/cancel in list_scheduled.${deferred > 0 ? ` ${deferred} recipient(s) held for tomorrow by the daily cap.` : ""}`,
+      });
+      if (res.queued === 0) {
+        if (res.deferredForCap >= recipients.length) {
+          return { error: `Daily broadcast cap reached (${res.dailyCap}/day). Split the rest across days — this pacing keeps the number safe from bans.` };
+        }
+        return { error: `All ${recipients.length} recipient(s) are blocked — nothing queued.`, skippedBlocked: res.skippedBlocked };
+      }
+      return {
+        queued: res.queued,
+        skippedBlocked: res.skippedBlocked,
+        deferredForCap: res.deferredForCap,
+        dailyCap: res.dailyCap,
+        staggerSec: res.staggerSec,
+        firstAt: res.firstAt,
+        lastAt: res.lastAt,
+        note: `Staggered privately like a native broadcast — last delivery ${res.lastAt}. Track/cancel in list_scheduled.${res.deferredForCap > 0 ? ` ${res.deferredForCap} recipient(s) held for tomorrow by the daily cap.` : ""}`,
       };
     },
   },

@@ -17,6 +17,7 @@ import { senapTools } from "./senap.js";
 import { broadcastTools } from "./broadcast-tools.js";
 import { groupAgentTools } from "./group-agent-tools.js";
 import { outreachTools } from "./outreach-tools.js";
+import { campaignTools } from "./campaign-tools.js";
 
 export const ALL_TOOLS: ToolDefinition[] = [
   ...timeTools,
@@ -34,6 +35,7 @@ export const ALL_TOOLS: ToolDefinition[] = [
   ...broadcastTools,
   ...groupAgentTools,
   ...outreachTools,
+  ...campaignTools,
 ];
 
 export function toolSchemas(): OpenAI.Chat.Completions.ChatCompletionTool[] {
