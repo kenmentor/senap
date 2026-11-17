@@ -343,6 +343,9 @@ export class WhatsappSession {
   private echoIds = new Map<string, number>();
   private static readonly ECHO_TTL_MS = 5 * 60_000;
   private static readonly ECHO_CAP = 500;
+  /** Consecutive self-chat echoes of identical text (loop-breaker signal). */
+  private echoStreak = 0;
+  private lastEchoText: string | null = null;
 
   private rememberOutId(id: string): void {
     if (!id) return;
@@ -357,6 +360,27 @@ export class WhatsappSession {
       if (oldest !== undefined) this.echoIds.delete(oldest);
     }
     this.echoIds.set(id, now);
+  }
+
+  /**
+   * Newest message WE sent to this chat (or any namespace twin of it).
+   * Form-agnostic on purpose: Baileys v7 mixes PN and LID JIDs, so the log
+   * key we sent under can differ from the echo's remoteJid — comparing only
+   * the exact key lets echoes slip through and loop forever.
+   */
+  private lastOutgoingText(remoteJid: string): { text: string; ts: number } | null {
+    let best: { text: string; ts: number } | null = null;
+    for (const [jid, log] of this.messageLog) {
+      if (jid !== remoteJid && !isSelfJid(jid, remoteJid)) continue;
+      for (let i = log.length - 1; i >= 0; i--) {
+        const e = log[i];
+        if (e.fromMe && e.text) {
+          if (!best || e.ts > best.ts) best = { text: e.text, ts: e.ts };
+          break;
+        }
+      }
+    }
+    return best;
   }
 
   /**
@@ -975,6 +999,8 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
     this.backdropTs.clear();
     this.groupCtxCache.clear();
     this.echoIds.clear();
+    this.echoStreak = 0;
+    this.lastEchoText = null;
     if (global.gc) {
       try {
         global.gc();
@@ -1887,12 +1913,30 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
 
           if (m.key.fromMe && selfChat) {
             // Our own sends echo back as fromMe. ID match = definitely ours.
-            if (mid && this.echoIds.delete(mid)) continue;
+            if (mid && this.echoIds.delete(mid)) {
+              this.echoStreak = 0;
+              continue;
+            }
             // Fast echo (arrived before our send promise resolved): identical
-            // text to what we just sent within 30s = ours, not owner typing.
-            const outLog = this.messageLog.get(remoteJid);
-            const lastOut = outLog ? [...outLog].reverse().find((e) => e.fromMe) : undefined;
-            if (lastOut && got.text !== "" && lastOut.text === got.text && Date.now() - lastOut.ts < 30_000) continue;
+            // text to what we just sent = ours, not owner typing. The lookup
+            // is JID-form-agnostic (PN vs LID namespaces) so a form mismatch
+            // can never turn an echo into a "new owner message" — that hole
+            // is what caused runaway self-reply loops (e.g. endless greetings
+            // after scheduling several tasks at once).
+            const lastOut = this.lastOutgoingText(remoteJid);
+            if (lastOut && got.text !== "" && lastOut.text === got.text && Date.now() - lastOut.ts < 60_000) {
+              if (this.lastEchoText === got.text) this.echoStreak += 1;
+              else this.echoStreak = 1;
+              this.lastEchoText = got.text;
+              if (this.echoStreak === 3) {
+                console.warn(
+                  `[self-chat] echo-loop breaker engaged on ${this.userId} — same own text ${this.echoStreak}x, dropping echoes`,
+                );
+              }
+              continue;
+            }
+            this.echoStreak = 0;
+            this.lastEchoText = null;
             console.log(`[self-chat] heard owner message in own chat (${got.kind})`);
           }
 
