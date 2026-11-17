@@ -85,19 +85,42 @@ export type IncomingKind = "text" | "photo" | "video" | "document" | "audio" | "
  */
 function extractIncoming(
   m: WAMessage,
-): { text: string; kind: IncomingKind; mentioned: string[]; quotedParticipant: string | null } | null {
+): { text: string; kind: IncomingKind; mentioned: string[]; quotedParticipant: string | null; quotedText: string } | null {
   const msg = m.message;
   if (!msg) return null;
   // Mentions + quotes live in contextInfo — needed to know when the bot is
   // actually being addressed in a group (vs. background chatter).
-  const ctxOf = (c: unknown): { mentionedJid?: unknown; participant?: unknown } =>
-    (c as { contextInfo?: { mentionedJid?: unknown; participant?: unknown } } | null | undefined)?.contextInfo ?? {};
+  const ctxOf = (c: unknown): { mentionedJid?: unknown; participant?: unknown; quotedMessage?: unknown } =>
+    (c as { contextInfo?: { mentionedJid?: unknown; participant?: unknown; quotedMessage?: unknown } } | null | undefined)?.contextInfo ?? {};
   const asJids = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
   const asJid = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
+  /** Pull the highlighted (replied-to) message's text so the model sees WHAT was quoted, not just who. */
+  const quotedTextOf = (qm: unknown): string => {
+    if (!qm || typeof qm !== "object") return "";
+    const q = qm as Record<string, unknown>;
+    if (typeof q.conversation === "string" && q.conversation.trim()) return q.conversation.trim();
+    const ext = q.extendedTextMessage as { text?: unknown } | undefined;
+    if (ext && typeof ext.text === "string" && ext.text.trim()) return ext.text.trim();
+    const media: [string, string][] = [
+      ["imageMessage", "photo"],
+      ["videoMessage", "video"],
+      ["documentMessage", "document"],
+      ["audioMessage", "voice note"],
+      ["stickerMessage", "sticker"],
+    ];
+    for (const [field, label] of media) {
+      const part = q[field] as { caption?: unknown } | undefined;
+      if (part && typeof part === "object") {
+        const cap = typeof part.caption === "string" ? part.caption.trim() : "";
+        return cap ? `[${label}] ${cap}` : `[${label}]`;
+      }
+    }
+    return "";
+  };
   const direct = msg.conversation || msg.extendedTextMessage?.text;
   if (direct) {
     const ctx = ctxOf(msg.extendedTextMessage);
-    return { text: direct, kind: "text", mentioned: asJids(ctx.mentionedJid), quotedParticipant: asJid(ctx.participant) };
+    return { text: direct, kind: "text", mentioned: asJids(ctx.mentionedJid), quotedParticipant: asJid(ctx.participant), quotedText: quotedTextOf(ctx.quotedMessage) };
   }
   if (msg.imageMessage) {
     const ctx = ctxOf(msg.imageMessage);
@@ -106,6 +129,7 @@ function extractIncoming(
       kind: "photo",
       mentioned: asJids(ctx.mentionedJid),
       quotedParticipant: asJid(ctx.participant),
+      quotedText: quotedTextOf(ctx.quotedMessage),
     };
   }
   if (msg.videoMessage) {
@@ -115,6 +139,7 @@ function extractIncoming(
       kind: "video",
       mentioned: asJids(ctx.mentionedJid),
       quotedParticipant: asJid(ctx.participant),
+      quotedText: quotedTextOf(ctx.quotedMessage),
     };
   }
   if (msg.documentMessage) {
@@ -124,10 +149,17 @@ function extractIncoming(
       kind: "document",
       mentioned: asJids(ctx.mentionedJid),
       quotedParticipant: asJid(ctx.participant),
+      quotedText: quotedTextOf(ctx.quotedMessage),
     };
   }
-  if (msg.audioMessage) return { text: "", kind: "audio", mentioned: [], quotedParticipant: null };
-  if (msg.stickerMessage) return { text: "", kind: "sticker", mentioned: [], quotedParticipant: null };
+  if (msg.audioMessage) {
+    const ctx = ctxOf(msg.audioMessage);
+    return { text: "", kind: "audio", mentioned: [], quotedParticipant: null, quotedText: quotedTextOf(ctx.quotedMessage) };
+  }
+  if (msg.stickerMessage) {
+    const ctx = ctxOf(msg.stickerMessage);
+    return { text: "", kind: "sticker", mentioned: [], quotedParticipant: null, quotedText: quotedTextOf(ctx.quotedMessage) };
+  }
   return null;
 }
 
@@ -1552,6 +1584,7 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
           kind: got.kind,
           mentioned: got.mentioned,
           quotedParticipant: got.quotedParticipant,
+          quotedText: got.quotedText,
           sentAt: typeof ts === "number" ? ts * 1000 : Number(ts ?? Date.now()),
           pushName: m.pushName ?? undefined,
           sock: current,
@@ -1588,10 +1621,12 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
     rawForLog?: WAMessage;
     mentioned?: string[];
     quotedParticipant?: string | null;
+    quotedText?: string | null;
   }): Promise<void> {
     const { remoteJid, key, text, kind, sentAt, pushName, sock, alreadyLogged, rawForLog } = args;
     const mentioned = args.mentioned ?? [];
     const quotedParticipant = args.quotedParticipant ?? null;
+    const quotedText = (args.quotedText ?? "").trim().slice(0, 300);
     const remoteJidAlt = args.remoteJidAlt ?? null;
     const mid = key.id ?? "";
     if (!mid) return;
@@ -1754,9 +1789,22 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
       // Tag group messages with the sender so the model knows WHO said what.
       // 1:1 owner messages carry [OWNER] so "recap", promos and stock
       // changes are acted on — the model never confuses owner for customer.
+      // A highlighted (replied-to) message rides along as quoted context so
+      // the model answers THAT message, not just the new line under it.
       const senderName = (pushName ?? "").trim();
+      let quotedPrefix = "";
+      if (quotedText) {
+        const meU = sock.user as unknown as { id?: string; lid?: string; phoneNumber?: string } | null | undefined;
+        const ownIds = [meU?.id, meU?.lid, meU?.phoneNumber].filter((x): x is string => !!x);
+        const who = quotedParticipant
+          ? ownIds.includes(quotedParticipant)
+            ? "you"
+            : (this.contacts.get(quotedParticipant)?.name ?? quotedParticipant.split("@")[0])
+          : "";
+        quotedPrefix = who ? `[Quoting ${who}: "${quotedText}"] ` : `[Quoting: "${quotedText}"] `;
+      }
       const baseText =
-        isGroupChat && senderName ? `[${senderName.slice(0, 40)}] ${incomingText}` : incomingText;
+        isGroupChat && senderName ? `[${senderName.slice(0, 40)}] ${quotedPrefix}${incomingText}` : `${quotedPrefix}${incomingText}`;
       const displayText = !isGroupChat && isOwnerEarly ? `[OWNER] ${baseText}` : baseText;
       if (isGroupChat) {
         // Backdrop: the model otherwise only remembers turns it replied to.
