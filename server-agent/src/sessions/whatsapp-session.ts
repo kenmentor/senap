@@ -1842,6 +1842,23 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
         if (log.length > 0) this.backdropTs.set(remoteJid, log[log.length - 1].ts);
       }
       history.append("user", displayText);
+      // Voice cloning: observe this line and mirror the customer's own style
+      // (1:1 customers only — groups follow the group persona, the owner gets
+      // direct [agent] efficiency). Cold profiles return null = house voice.
+      let style: string | null = null;
+      if (!isGroupChat && !isOwnerEarly) {
+        try {
+          const { styleDirectiveFor } = await import("./style-profile.js");
+          style = await styleDirectiveFor(
+            this.userId,
+            remoteJid,
+            text,
+            history.all().length > 1,
+          ).catch(() => null);
+        } catch {
+          /* default voice on any failure */
+        }
+      }
       this.rememberContact(remoteJid, pushName ?? undefined);
       if (!alreadyLogged && rawForLog) this.logIncoming(remoteJid, rawForLog, displayText, kind);
       // All socket writes go through the session-wide serializer: one account,
@@ -1989,6 +2006,7 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
             contacts: scoped.contacts,
             messageLog: scoped.messageLog,
             group,
+            style,
           });
         } finally {
           settled = true;
