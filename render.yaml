@@ -1,0 +1,76 @@
+# ── senap Render blueprint ───────────────────────────────────────────────────
+# New → Blueprint → select this repo. Render creates BOTH services below and
+# wires them together. You only fill in the `sync: false` secrets once.
+#
+# Required manual values:
+#   MONGODB_URI            MongoDB Atlas connection string (both services, same DB)
+#   AGENT_API_KEY          long random string — MUST be identical on both services
+#                          generate with:  openssl rand -hex 32
+#   CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN  Workers AI creds (agent)
+#   AUTH_SECRET            long random string (dashboard cookie signing)
+#                          generate with:  openssl rand -hex 32
+services:
+  # ── WhatsApp agent (Hono + Baileys) ──────────────────────────────────────
+  - type: web
+    name: senap-agent
+    runtime: node
+    rootDir: server-agent
+    buildCommand: npm install --include=dev --no-audit --no-fund && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: MONGODB_URI
+        sync: false
+      - key: AGENT_API_KEY
+        sync: false # must match dashboard's AGENT_API_KEY exactly
+      - key: PUBLIC_APP_URL
+        fromService:
+          type: web
+          name: senap-dashboard
+          property: host
+          # NOTE: renders as https://<dashboard-host>; protocol prefix added by app
+      - key: ALLOWED_ORIGINS
+        fromService:
+          type: web
+          name: senap-dashboard
+          property: host
+      - key: CLOUDFLARE_ACCOUNT_ID
+        sync: false
+      - key: CLOUDFLARE_API_TOKEN
+        sync: false
+      - key: WA_LOG_LEVEL
+        value: warn
+      - key: BROADCAST_DAILY_CAP
+        value: "250"
+
+  # ── Dashboard (Next.js) ──────────────────────────────────────────────────
+  - type: web
+    name: senap-dashboard
+    runtime: node
+    rootDir: service
+    buildCommand: npm install --no-audit --no-fund && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: MONGODB_URI
+        sync: false # same Atlas string as the agent
+      - key: AUTH_SECRET
+        sync: false # openssl rand -hex 32
+      - key: AGENT_URL
+        fromService:
+          type: web
+          name: senap-agent
+          property: host
+      - key: NEXT_PUBLIC_AGENT_URL
+        fromService:
+          type: web
+          name: senap-agent
+          property: host
+      - key: AGENT_API_KEY
+        sync: false # must match agent's AGENT_API_KEY exactly
+      - key: COST_QUOTA
+        value: "1000"

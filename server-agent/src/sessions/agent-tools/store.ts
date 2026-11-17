@@ -187,12 +187,16 @@ export async function findProductByIdOrSku(idOrSku: string): Promise<ShopProduct
  * can download it). Anything else yields "".
  */
 export function appBaseUrl(): string {
-  return (
+  const raw = (
     process.env.PUBLIC_APP_URL ??
     process.env.APP_URL ??
     process.env.NEXT_PUBLIC_APP_URL ??
     "http://localhost:3000"
-  ).replace(/\/$/, "");
+  )
+    .trim()
+    .replace(/\/+$/, "");
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) return raw;
+  return /^(localhost|127\.0\.0\.1|\[?::1\]?)(:\d+)?$/i.test(raw) ? `http://${raw}` : `https://${raw}`;
 }
 
 export function resolveImageUrl(image: string | undefined): string {

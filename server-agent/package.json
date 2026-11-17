@@ -5,6 +5,9 @@
   "license": "ISC",
   "author": "mentor",
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "main": "dist/src/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",

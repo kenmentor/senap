@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { agentBase, agentHeaders } from "@/lib/agent";
 
 /**
  * Server-side proxy to the WhatsApp agent. Browser pages must call the agent
@@ -7,27 +8,10 @@ import { NextResponse } from "next/server";
  * nothing 401s silently and contacts/groups/QR actually load.
  */
 
-function agentBase(): string {
-  return (
-    process.env.AGENT_URL ??
-    process.env.NEXT_PUBLIC_AGENT_URL ??
-    "http://localhost:3001"
-  ).replace(/\/$/, "");
-}
-
-function agentKey(): string {
-  return (process.env.AGENT_API_KEY ?? "").trim();
-}
-
 async function forward(req: Request, path: string[]) {
   const url = new URL(req.url);
   const target = `${agentBase()}/${path.map(encodeURIComponent).join("/")}${url.search}`;
-  const headers: Record<string, string> = {};
-  const key = agentKey();
-  if (key) {
-    headers.authorization = `Bearer ${key}`;
-    headers["x-agent-key"] = key;
-  }
+  const headers: Record<string, string> = { ...agentHeaders() };
   const init: RequestInit = { method: req.method, headers };
   if (req.method !== "GET" && req.method !== "HEAD") {
     const buf = await req.arrayBuffer().catch(() => null);

@@ -1,20 +1,13 @@
 import { NextResponse } from "next/server";
 import mongoose, { Schema } from "mongoose";
 import { dbConnect } from "@/lib/db/mongoose";
+import { agentBase, agentHeaders } from "@/lib/agent";
 
-const AGENT_URL = (
-  process.env.AGENT_URL ??
-  process.env.NEXT_PUBLIC_AGENT_URL ??
-  "http://localhost:3001"
-).replace(/\/$/, "");
+const AGENT_URL = agentBase();
 
 // Must match the agent's AGENT_API_KEY — without this every /sessions/* call
 // 401s and the dashboard silently shows "offline" with empty chats/tasks.
-const AGENT_KEY = (
-  process.env.AGENT_API_KEY ??
-  process.env.NEXT_PUBLIC_AGENT_KEY ??
-  ""
-).trim();
+const AGENT_HEADERS = agentHeaders();
 
 async function agentGet(path: string): Promise<unknown | null> {
   try {
@@ -22,9 +15,7 @@ async function agentGet(path: string): Promise<unknown | null> {
     const t = setTimeout(() => ctrl.abort(), 8000);
     const res = await fetch(`${AGENT_URL}${path}`, {
       signal: ctrl.signal,
-      headers: AGENT_KEY
-        ? { authorization: `Bearer ${AGENT_KEY}`, "x-agent-key": AGENT_KEY }
-        : {},
+      headers: { ...AGENT_HEADERS },
     });
     clearTimeout(t);
     if (!res.ok) return null;

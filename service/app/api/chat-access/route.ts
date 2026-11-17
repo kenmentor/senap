@@ -1,29 +1,21 @@
 import { NextResponse } from "next/server";
 import { dbConnect, docId } from "@/lib/db/mongoose";
 import { ChatSettings, ContactRule } from "@/lib/db/models/ChatAccess";
+import { agentBase, agentHeaders } from "@/lib/agent";
 
 function dbError() {
   return NextResponse.json({ error: "Database is offline." }, { status: 503 });
 }
 
-function agentBase(): string {
-  return (
-    process.env.AGENT_URL ??
-    process.env.NEXT_PUBLIC_AGENT_URL ??
-    "http://localhost:3001"
-  ).replace(/\/$/, "");
-}
-
 /** Best-effort: tell the agent to drop its cached block/allow list. */
 async function invalidateAgentCache(userId: string): Promise<void> {
   try {
-    const key = (process.env.AGENT_API_KEY ?? "").trim();
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 2500);
     await fetch(`${agentBase()}/sessions/${encodeURIComponent(userId)}/access/invalidate`, {
       method: "POST",
       signal: ctrl.signal,
-      headers: key ? { authorization: `Bearer ${key}`, "x-agent-key": key } : {},
+      headers: { ...agentHeaders() },
     }).catch(() => {});
     clearTimeout(t);
   } catch {

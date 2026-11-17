@@ -4,8 +4,9 @@ import bcrypt from "bcryptjs";
 import { dbConnect } from "@/lib/db/mongoose";
 import { Settings } from "@/lib/db/models/Settings";
 import { LinkedAccount } from "@/lib/db/models/LinkedAccount";
+import { agentBase, agentHeaders } from "@/lib/agent";
 
-const AGENT_URL = (process.env.AGENT_URL ?? process.env.NEXT_PUBLIC_AGENT_URL ?? "http://localhost:3001").replace(/\/$/, "");
+const AGENT_URL = agentBase();
 const OTP_TTL_MS = 10 * 60 * 1000;
 
 function digitsOf(phone: string): string {
@@ -53,12 +54,11 @@ export async function POST(req: Request) {
       try {
         const ctrl = new AbortController();
         const t = setTimeout(() => ctrl.abort(), 8000);
-        const key = (process.env.AGENT_API_KEY ?? "").trim();
         const res = await fetch(`${AGENT_URL}/sessions/${encodeURIComponent(from)}/send`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            ...(key ? { authorization: `Bearer ${key}`, "x-agent-key": key } : {}),
+            ...agentHeaders(),
           },
           body: JSON.stringify({
             to: jidOf(adminPhone),

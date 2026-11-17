@@ -10,9 +10,16 @@ const sessions = new SessionManager();
 // Browser frontend (Next.js) calls these routes directly.
 // Lock down in prod via ALLOWED_ORIGINS (comma-separated) or PUBLIC_APP_URL;
 // dev defaults to open CORS for localhost dashboards.
+// Bare hostnames (e.g. Render injects `svc.onrender.com` with no scheme) are
+// normalized to https:// so they match the browser's Origin header.
+function withScheme(raw: string): string {
+  const v = raw.trim().replace(/\/+$/, "");
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) return v;
+  return /^(localhost|127\.0\.0\.1|\[?::1\]?)(:\d+)?$/i.test(v) ? `http://${v}` : `https://${v}`;
+}
 const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? process.env.PUBLIC_APP_URL ?? "")
   .split(",")
-  .map((s) => s.trim())
+  .map((s) => (s.trim() ? withScheme(s.trim()) : ""))
   .filter(Boolean);
 app.use(
   "*",
