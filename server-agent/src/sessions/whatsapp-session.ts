@@ -982,6 +982,55 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
     return isSelfJid(participantId, selfId);
   }
 
+  /** Last holding-line index per chat, so slow replies don't repeat themselves. */
+  private lastHolding = new Map<string, number>();
+
+  /**
+   * Short human stall lines for slow answers. Plain shopkeeper talk — never
+   * backend narration ("searching", "database", "let me check stock" are
+   * banned by the house style and would smell like a bot).
+   */
+  private static readonly HOLDING_LINES = [
+    "On am — give me one minute, I dey confirm something for you.",
+    "Hold on small, make I check am well for you.",
+    "Got you — one sec, I dey put everything together.",
+    "Seen — just dey round am up for you now.",
+  ];
+
+  /**
+   * When the answer is taking a while (tool calls, slow model), act like a
+   * human who was seen reading: blue ticks + ONE short bubble, then the real
+   * answer lands normally. 1:1 chats only — groups stay quiet unless the
+   * reply gate already decided to answer.
+   */
+  private async sendHoldingLine(
+    remoteJid: string,
+    opts: { isOwner: boolean; keyId?: string | null; participant?: string | null; text: string },
+  ): Promise<string | null> {
+    const sock = this.liveSock();
+    if (!sock || !opts.keyId) return null;
+    const lines = WhatsappSession.HOLDING_LINES;
+    const last = this.lastHolding.get(remoteJid) ?? -1;
+    let idx = Math.floor(Math.random() * lines.length);
+    if (lines.length > 1 && idx === last) idx = (idx + 1) % lines.length;
+    this.lastHolding.set(remoteJid, idx);
+    const line =
+      opts.isOwner && !remoteJid.endsWith("@g.us") ? `[agent] ${lines[idx]}` : lines[idx];
+    try {
+      await sock.readMessages([
+        { remoteJid, id: opts.keyId, fromMe: false, participant: opts.participant ?? null },
+      ]);
+    } catch {
+      /* receipts are cosmetic — never block the holding line */
+    }
+    await this.sendNaturalReply(
+      remoteJid,
+      line,
+      { id: opts.keyId, participant: opts.participant ?? null, text: opts.text },
+    );
+    return line;
+  }
+
   /** All known own forms (PN + LID + phoneNumber) for participant matching. */
   private ownForms(): string[] {
     const me = this.sock?.user as unknown as { id?: string; lid?: string; phoneNumber?: string } | null | undefined;
@@ -1847,17 +1896,45 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
           }
         }
       }
-      const reply = await handleCustomerMessage({
-        userId: this.userId,
-        customerJid: remoteJid,
-        incomingText: displayText,
-        history: history.all(),
-        sendText: scoped.sendText,
-        sock: scoped.sock,
-        contacts: scoped.contacts,
-        messageLog: scoped.messageLog,
-        group,
-      });
+      const reply = await (async () => {
+        // Slow answer? Act human while the tools work: after 8s with no
+        // reply yet, blue-tick + ONE short holding bubble (1:1 only), then
+        // the real answer lands on top like a follow-up message.
+        let settled = false;
+        let holdingTimer: ReturnType<typeof setTimeout> | null = null;
+        if (!isGroupChat && key?.id) {
+          holdingTimer = setTimeout(() => {
+            if (settled) return;
+            void this
+              .sendHoldingLine(remoteJid, {
+                isOwner,
+                keyId: key.id ?? null,
+                participant: key.participant ?? null,
+                text,
+              })
+              .then((said) => {
+                if (said) history.append("assistant", said);
+              })
+              .catch(() => {});
+          }, 8000);
+        }
+        try {
+          return await handleCustomerMessage({
+            userId: this.userId,
+            customerJid: remoteJid,
+            incomingText: displayText,
+            history: history.all(),
+            sendText: scoped.sendText,
+            sock: scoped.sock,
+            contacts: scoped.contacts,
+            messageLog: scoped.messageLog,
+            group,
+          });
+        } finally {
+          settled = true;
+          if (holdingTimer) clearTimeout(holdingTimer);
+        }
+      })();
       history.append("assistant", reply);
 
       console.log("User:", displayText);
