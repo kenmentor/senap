@@ -15,6 +15,7 @@ import { statusTools } from "./status-tools.js";
 import { jobTools } from "./jobs.js";
 import { senapTools } from "./senap.js";
 import { broadcastTools } from "./broadcast-tools.js";
+import { groupAgentTools } from "./group-agent-tools.js";
 
 export const ALL_TOOLS: ToolDefinition[] = [
   ...timeTools,
@@ -30,6 +31,7 @@ export const ALL_TOOLS: ToolDefinition[] = [
   ...jobTools,
   ...senapTools,
   ...broadcastTools,
+  ...groupAgentTools,
 ];
 
 export function toolSchemas(): OpenAI.Chat.Completions.ChatCompletionTool[] {

@@ -35,6 +35,31 @@ export interface ToolContext {
   messageLog: Map<string, BufferedMessage[]>;
 }
 
+/** Group context for group-aware replies: who the agent is in the group + how the group talks. */
+export interface GroupContext {
+  subject: string;
+  members: number;
+  /** "admin" when the line is a group admin, else "member". */
+  ownRole: "admin" | "member";
+  /** True when THIS message addresses the bot (mention, quote-reply, or name). */
+  addressed: boolean;
+  /** Names that address the bot (persona name, shop short name) for text matching. */
+  names: string[];
+  /** The assistant's aim in this chat (role-derived) — drives intent weighting, never hardcoded sales bias. */
+  aim: string;
+  /** Reply confidence threshold: score >= this to answer (lower = chattier). */
+  threshold: number;
+  /** Persona + rhythm when the owner activated group mode, else null (legacy free-reply). */
+  managed: {
+    name: string;
+    role: string;
+    personality: string;
+    duty: string;
+    maxPerDay: number;
+    styleExamples: string[];
+  } | null;
+}
+
 export type ToolScope = "customer" | "owner";
 
 export interface ToolDefinition {

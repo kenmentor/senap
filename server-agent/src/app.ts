@@ -262,6 +262,173 @@ app.get("/sessions/:userId/qr", (c) => {
   });
 });
 
+// Activate the agent for a group: persona + rhythm + first recurring job, one call.
+app.post("/sessions/:userId/group-agent/setup", async (c) => {
+  const userId = c.req.param("userId");
+  const session = sessions.getSession(userId);
+  if (!session) return c.json({ error: "session not found" }, 404);
+  if (!session.isConnected()) return c.json({ error: "session is not connected" }, 503);
+  type SetupBody = {
+    groupJid?: string;
+    name?: string;
+    role?: string;
+    personality?: string;
+    duty?: string;
+    intervalHours?: number;
+    maxPerDay?: number;
+    replyThreshold?: number;
+  };
+  const body = (await c.req.json<SetupBody>().catch(() => ({}) as SetupBody));
+  const groupJid = String(body.groupJid ?? "").trim();
+  if (!groupJid.endsWith("@g.us")) return c.json({ error: "`groupJid` must be a group (@g.us)" }, 400);
+  try {
+    const store = await import("./sessions/agent-tools/group-agent-store.js");
+    const { buildEngagementInstruction, styleExamplesFromLog } = await import("./sessions/agent-tools/group-agent-tools.js");
+    const { JobModel } = await import("./sessions/agent-tools/jobs.js");
+    const intervalHours = Math.min(168, Math.max(1, Math.round(Number(body.intervalHours ?? 6) || 6)));
+    const maxPerDay = Math.min(20, Math.max(1, Math.round(Number(body.maxPerDay ?? 4) || 4)));
+    const rtRaw = Number(body.replyThreshold);
+    const replyThreshold = Number.isFinite(rtRaw) ? Math.min(1, Math.max(0, rtRaw)) : 0.45;
+    const details = await session.groupDetails(groupJid);
+    const repeatKey = store.repeatKeyFor(userId, groupJid);
+    await store.deletePendingChain(userId, repeatKey);
+    const instruction = buildEngagementInstruction({
+      name: String(body.name ?? "").trim(),
+      role: String(body.role ?? "").trim(),
+      subject: details.subject,
+      maxPerDay,
+      duty: String(body.duty ?? "").trim(),
+    });
+    const firstAt = new Date(Date.now() + intervalHours * 3_600_000);
+    const doc = await JobModel.create({
+      userId,
+      chatJid: groupJid,
+      createdBy: groupJid,
+      createdByIsOwner: true,
+      kind: "agent",
+      text: instruction,
+      runAt: firstAt,
+      status: "pending",
+      attempts: 0,
+      lastError: "",
+      repeatMs: intervalHours * 3_600_000,
+      repeatKey,
+    });
+    const style = styleExamplesFromLog(
+      session.recentUserTexts(groupJid, 50).map((text) => ({ text, fromMe: false })),
+    );
+    const baseCfg = {
+      userId,
+      groupJid,
+      enabled: true,
+      name: String(body.name ?? "").trim().slice(0, 60),
+      role: String(body.role ?? "").trim().slice(0, 120),
+      personality: String(body.personality ?? "").trim().slice(0, 300),
+      duty: String(body.duty ?? "").trim().slice(0, 300),
+      intervalHours,
+      maxPerDay,
+      replyThreshold,
+      subject: details.subject,
+      autoWhitelisted: false,
+      styleExamples: style,
+      repeatKey,
+      jobId: String(doc._id),
+    };
+    await store.saveGroupAgent(baseCfg);
+    // Activation implies access: allow-list the group so EXCLUSIVE mode lets
+    // its messages through (lifts a STOP block too — reported).
+    let accessNote = "";
+    try {
+      const { ensureGroupAllowed } = await import("./sessions/chat-access.js");
+      const r = await ensureGroupAllowed(userId, groupJid, details.subject);
+      if (r.whitelisted) await store.saveGroupAgent({ ...baseCfg, autoWhitelisted: true });
+      accessNote = r.wasBlocked
+        ? "The group was blocked (e.g. a STOP opt-out) — activation lifted the block."
+        : "The group is now allow-listed so its messages always reach the agent.";
+    } catch {
+      accessNote = "Allow-listing failed — whitelist the group on the Link page if messages don't arrive.";
+    }
+    const { wake } = await import("./sessions/task-queue.js");
+    wake();
+    return c.json({
+      userId,
+      activated: true,
+      group: details.subject,
+      members: details.members,
+      amAdmin: details.isAdmin,
+      intervalHours,
+      maxPerDay,
+      replyThreshold,
+      styleSamples: style.length,
+      firstRunAt: firstAt.toISOString(),
+      access: accessNote.trim(),
+    });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : "setup failed" }, 500);
+  }
+});
+
+// Group agent status: persona + rhythm + next run + today's count.
+app.get("/sessions/:userId/group-agent/status", async (c) => {
+  const userId = c.req.param("userId");
+  const groupJid = c.req.query("jid")?.trim() ?? "";
+  if (!groupJid) return c.json({ error: "`jid` query param is required" }, 400);
+  try {
+    const store = await import("./sessions/agent-tools/group-agent-store.js");
+    const { countMessages } = await import("./sessions/chat-memory.js");
+    const cfg = await store.getGroupAgent(userId, groupJid);
+    if (!cfg) return c.json({ userId, configured: false });
+    const day = new Date();
+    day.setHours(0, 0, 0, 0);
+    const [next, sentToday] = await Promise.all([
+      store.nextPendingRun(userId, cfg.repeatKey),
+      countMessages(userId, groupJid, "assistant", day),
+    ]);
+    return c.json({
+      userId,
+      configured: true,
+      enabled: cfg.enabled,
+      name: cfg.name,
+      role: cfg.role,
+      intervalHours: cfg.intervalHours,
+      maxPerDay: cfg.maxPerDay,
+      replyThreshold: typeof cfg.replyThreshold === "number" ? cfg.replyThreshold : 0.5,
+      sentToday,
+      nextRunAt: next ? next.toISOString() : null,
+    });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : "lookup failed" }, 503);
+  }
+});
+
+// Switch the group agent off (persona saved, loop cancelled).
+app.delete("/sessions/:userId/group-agent", async (c) => {
+  const userId = c.req.param("userId");
+  const body = (await c.req.json<{ groupJid?: string }>().catch(() => ({}) as { groupJid?: string }));
+  const groupJid = String(body.groupJid ?? c.req.query("jid") ?? "").trim();
+  if (!groupJid) return c.json({ error: "`groupJid` is required" }, 400);
+  try {
+    const store = await import("./sessions/agent-tools/group-agent-store.js");
+    const cfg = await store.getGroupAgent(userId, groupJid);
+    if (!cfg) return c.json({ error: "no group agent configured here" }, 404);
+    const cancelled = await store.deletePendingChain(userId, cfg.repeatKey);
+    await store.setGroupAgentEnabled(userId, groupJid, false);
+    let accessRemoved = false;
+    if (cfg.autoWhitelisted) {
+      try {
+        const { removeAutoWhitelist } = await import("./sessions/chat-access.js");
+        await removeAutoWhitelist(userId, groupJid);
+        accessRemoved = true;
+      } catch {
+        /* rule stays — harmless, removable on the Link page */
+      }
+    }
+    return c.json({ userId, disabled: true, cancelledLoops: cancelled, accessRemoved });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : "disable failed" }, 500);
+  }
+});
+
 // Full delete: stop the session and wipe its auth from Mongo.
 app.delete("/sessions/:userId", async (c) => {
   const userId = c.req.param("userId");

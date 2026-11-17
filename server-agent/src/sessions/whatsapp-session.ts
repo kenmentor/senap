@@ -12,9 +12,11 @@ import { prepareCustomerMessage } from "./message-skill.js";
 import { useMongoAuthState } from "./mongo-auth-state.js";
 import ConversationHistory from "./conversation-history.js";
 import { isChatAllowed } from "./chat-access.js";
+import { isSelfJid } from "./agent-tools/store.js";
 import { handleCustomerMessage } from "../assistant/agent-runner.js";
 import type {
   BufferedMessage,
+  GroupContext,
   KnownContact,
 } from "./agent-tools/tool-types.js";
 
@@ -81,28 +83,51 @@ export type IncomingKind = "text" | "photo" | "video" | "document" | "audio" | "
  * honest acknowledgement instead of silence. Returns null only for
  * truly empty/protocol messages.
  */
-function extractIncoming(m: WAMessage): { text: string; kind: IncomingKind } | null {
+function extractIncoming(
+  m: WAMessage,
+): { text: string; kind: IncomingKind; mentioned: string[]; quotedParticipant: string | null } | null {
   const msg = m.message;
   if (!msg) return null;
+  // Mentions + quotes live in contextInfo — needed to know when the bot is
+  // actually being addressed in a group (vs. background chatter).
+  const ctxOf = (c: unknown): { mentionedJid?: unknown; participant?: unknown } =>
+    (c as { contextInfo?: { mentionedJid?: unknown; participant?: unknown } } | null | undefined)?.contextInfo ?? {};
+  const asJids = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+  const asJid = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
   const direct = msg.conversation || msg.extendedTextMessage?.text;
-  if (direct) return { text: direct, kind: "text" };
+  if (direct) {
+    const ctx = ctxOf(msg.extendedTextMessage);
+    return { text: direct, kind: "text", mentioned: asJids(ctx.mentionedJid), quotedParticipant: asJid(ctx.participant) };
+  }
   if (msg.imageMessage) {
-    return msg.imageMessage.caption
-      ? { text: msg.imageMessage.caption, kind: "photo" }
-      : { text: "", kind: "photo" };
+    const ctx = ctxOf(msg.imageMessage);
+    return {
+      text: msg.imageMessage.caption ?? "",
+      kind: "photo",
+      mentioned: asJids(ctx.mentionedJid),
+      quotedParticipant: asJid(ctx.participant),
+    };
   }
   if (msg.videoMessage) {
-    return msg.videoMessage.caption
-      ? { text: msg.videoMessage.caption, kind: "video" }
-      : { text: "", kind: "video" };
+    const ctx = ctxOf(msg.videoMessage);
+    return {
+      text: msg.videoMessage.caption ?? "",
+      kind: "video",
+      mentioned: asJids(ctx.mentionedJid),
+      quotedParticipant: asJid(ctx.participant),
+    };
   }
   if (msg.documentMessage) {
-    return msg.documentMessage.caption
-      ? { text: msg.documentMessage.caption, kind: "document" }
-      : { text: "", kind: "document" };
+    const ctx = ctxOf(msg.documentMessage);
+    return {
+      text: msg.documentMessage.caption ?? "",
+      kind: "document",
+      mentioned: asJids(ctx.mentionedJid),
+      quotedParticipant: asJid(ctx.participant),
+    };
   }
-  if (msg.audioMessage) return { text: "", kind: "audio" };
-  if (msg.stickerMessage) return { text: "", kind: "sticker" };
+  if (msg.audioMessage) return { text: "", kind: "audio", mentioned: [], quotedParticipant: null };
+  if (msg.stickerMessage) return { text: "", kind: "sticker", mentioned: [], quotedParticipant: null };
   return null;
 }
 
@@ -123,6 +148,8 @@ export class WhatsappSession {
    */
   private chatChains = new Map<string, Promise<void>>();
   private chatActivity = new Map<string, number>();
+  /** Watermark: newest messageLog ts already mirrored into LLM history (per chat). Stops backdrop re-injection. */
+  private backdropTs = new Map<string, number>();
   private static readonly MAX_CHATS = 200;
   private static readonly IDLE_EVICT_MS = 30 * 60_000;
   private static readonly MAX_INCOMING = 2000;
@@ -209,11 +236,20 @@ export class WhatsappSession {
         get(target, prop) {
           if (prop === "sendMessage") {
             return (jid: string, content: unknown, options?: unknown) =>
-              session.enqueueSend(String(jid), () => {
+              session.enqueueSend(String(jid), async () => {
                 const t = target as unknown as {
-                  sendMessage: (j: string, c: unknown, o?: unknown) => Promise<never>;
+                  sendMessage: (j: string, c: unknown, o?: unknown) => Promise<unknown>;
                 };
-                return t.sendMessage(jid, content, options);
+                const sent = await t.sendMessage(jid, content, options);
+                // Ledger our own sends: their server echoes return via upsert
+                // as fromMe — matched here so we never answer ourselves.
+                try {
+                  const id = (sent as { key?: { id?: string } } | null | undefined)?.key?.id;
+                  if (id) session.rememberOutId(id);
+                } catch {
+                  /* ledger is best-effort */
+                }
+                return sent as never;
               });
           }
           const value = (target as unknown as Record<string | symbol, unknown>)[prop];
@@ -225,6 +261,100 @@ export class WhatsappSession {
       this.sockProxy = { raw, proxy };
     }
     return this.sockProxy.proxy;
+  }
+
+  /**
+   * IDs of messages WE sent (recorded off every socket write). Their server
+   * echoes come back through messages.upsert as fromMe — without this ledger
+   * the bot would answer its own replies, especially in its self-chat.
+   */
+  private echoIds = new Map<string, number>();
+  private static readonly ECHO_TTL_MS = 5 * 60_000;
+  private static readonly ECHO_CAP = 500;
+
+  private rememberOutId(id: string): void {
+    if (!id) return;
+    const now = Date.now();
+    for (const [k, at] of this.echoIds) {
+      if (now - at > WhatsappSession.ECHO_TTL_MS) this.echoIds.delete(k);
+      else break; // insertion-ordered: rest are newer
+      if (this.echoIds.size < WhatsappSession.ECHO_CAP) break;
+    }
+    if (this.echoIds.size >= WhatsappSession.ECHO_CAP) {
+      const oldest = this.echoIds.keys().next().value;
+      if (oldest !== undefined) this.echoIds.delete(oldest);
+    }
+    this.echoIds.set(id, now);
+  }
+
+  /**
+   * Is this chat the line's own "Message yourself" chat? Compares every known
+   * form on both sides (PN vs LID, remoteJid vs remoteJidAlt) because Baileys
+   * v7 mixes @s.whatsapp.net and @lid forms — a single digit-tail match
+   * cannot work across those namespaces. Includes id + lid + phoneNumber
+   * because `user.id` alone is often only one side of the pair.
+   */
+  private isOwnChatId(
+    sock: ReturnType<typeof makeWASocket> | null,
+    remoteJid: string,
+    altJid?: string | null,
+  ): boolean {
+    const me = sock?.user as unknown as { id?: string; lid?: string; phoneNumber?: string } | null | undefined;
+    const mine = [me?.id, me?.lid, me?.phoneNumber].filter((x): x is string => !!x);
+    if (mine.length === 0 || !remoteJid) return false;
+    const theirs = [remoteJid, altJid].filter((x): x is string => !!x);
+    return theirs.some((t) => mine.some((s) => t === s || isSelfJid(t, s)));
+  }
+
+  /**
+   * Async counterpart to isOwnChatId: resolves PN<->LID via Baileys'
+   * signalRepository mapping so a PN session still recognises its LID
+   * self-chat (and vice versa) even when `sock.user` only carries one side
+   * and no remoteJidAlt arrived on the stanza.
+   */
+  private async resolveOwnChatId(
+    sock: ReturnType<typeof makeWASocket> | null,
+    remoteJid: string,
+    altJid?: string | null,
+  ): Promise<boolean> {
+    if (!sock || !remoteJid) return false;
+    if (this.isOwnChatId(sock, remoteJid, altJid)) return true;
+    try {
+      const repo = (sock as unknown as { signalRepository?: { lidMapping?: {
+        getPNForLID: (lid: string) => Promise<string | null>;
+        getLIDForPN: (pn: string) => Promise<string | null>;
+      } } }).signalRepository?.lidMapping;
+      if (!repo) return false;
+      const me = sock?.user as unknown as { id?: string; lid?: string; phoneNumber?: string } | null | undefined;
+      const mine = [me?.id, me?.lid, me?.phoneNumber].filter((x): x is string => !!x);
+      const theirs = [remoteJid, altJid].filter((x): x is string => !!x);
+      const isLid = (j: string) => j.toLowerCase().endsWith("@lid") || j.toLowerCase().endsWith("@hosted.lid");
+      const isPn = (j: string) => {
+        const s = j.toLowerCase().split("@")[1] ?? "";
+        return s === "s.whatsapp.net" || s === "c.us" || s === "hosted";
+      };
+      for (const t of theirs) {
+        if (isLid(t)) {
+          const pn = await repo.getPNForLID(t).catch(() => null);
+          if (pn && mine.some((s) => isSelfJid(pn, s) || isSelfJid(t, s))) return true;
+        } else if (isPn(t)) {
+          const lid = await repo.getLIDForPN(t).catch(() => null);
+          if (lid && mine.some((s) => isSelfJid(lid, s))) return true;
+        }
+      }
+      for (const s of mine) {
+        if (isPn(s)) {
+          const lid = await repo.getLIDForPN(s).catch(() => null);
+          if (lid && theirs.some((t) => isSelfJid(t, lid))) return true;
+        } else if (isLid(s)) {
+          const pn = await repo.getPNForLID(s).catch(() => null);
+          if (pn && theirs.some((t) => isSelfJid(t, pn))) return true;
+        }
+      }
+      return false;
+    } catch {
+      return false;
+    }
   }
 
   /** Append a socket write to the session-wide chain with a cross-chat human gap. */
@@ -286,6 +416,8 @@ export class WhatsappSession {
       this.contacts.delete(jid);
       this.chatActivity.delete(jid);
       this.chatChains.delete(jid);
+      this.groupCtxCache.delete(jid);
+      this.backdropTs.delete(jid);
     }
   }
 
@@ -317,6 +449,196 @@ export class WhatsappSession {
     return { customerJid: chatJid, isOwner, sendText, sock, contacts: scopedContacts, messageLog: scopedLog };
   }
 
+  /** Group-context cache (subject/role/style, 10min TTL) — avoids a metadata fetch per message. */
+  private groupCtxCache = new Map<string, { at: number; ctx: GroupContext }>();
+  private static readonly GROUP_CTX_TTL_MS = 10 * 60_000;
+
+  /**
+   * Who the agent is in a group + how the group talks. Null for 1:1 chats.
+   * Metadata failures degrade to a minimal context (never blocks the reply);
+   * managed config comes from the durable store, style from live memory.
+   */
+  async groupContext(chatJid: string): Promise<GroupContext | null> {
+    if (!chatJid.endsWith("@g.us")) return null;
+    const hit = this.groupCtxCache.get(chatJid);
+    if (hit && Date.now() - hit.at < WhatsappSession.GROUP_CTX_TTL_MS) return hit.ctx;
+
+    let subject = this.contacts.get(chatJid)?.name;
+    if (!subject || subject === "unknown") subject = "this group";
+    let members = 0;
+    let ownRole: GroupContext["ownRole"] = "member";
+    try {
+      if (this.sock && this.status === "open") {
+        const meta = await this.sock.groupMetadata(chatJid);
+        subject = meta.subject || subject;
+        members = meta.participants?.length ?? 0;
+        const own = this.ownForms();
+        const me = (meta.participants ?? []).find((p) => own.some((s) => this.isSelfParticipant(p.id, s)));
+        const flag = (me as { admin?: string | null } | undefined)?.admin;
+        if (flag === "admin" || flag === "superadmin") ownRole = "admin";
+      }
+    } catch {
+      /* offline metadata — minimal context still helps */
+    }
+
+    let managed: GroupContext["managed"] = null;
+    let threshold = 0.3;
+    try {
+      const { getGroupAgent } = await import("./agent-tools/group-agent-store.js");
+      const cfg = await getGroupAgent(this.userId, chatJid);
+      if (cfg?.enabled) {
+        managed = {
+          name: cfg.name,
+          role: cfg.role,
+          personality: cfg.personality,
+          duty: cfg.duty,
+          maxPerDay: cfg.maxPerDay,
+          styleExamples: cfg.styleExamples.length > 0 ? cfg.styleExamples : this.recentUserTexts(chatJid, 12),
+        };
+        threshold =
+          typeof cfg.replyThreshold === "number"
+            ? Math.min(1, Math.max(0, cfg.replyThreshold))
+            : 0.35;
+      }
+    } catch {
+      /* proceed unmanaged */
+    }
+
+    // Names that address the bot (persona, shop short name) for text matching.
+    const names: string[] = [];
+    let aimRole = "";
+    try {
+      const { loadPersona, loadBusiness } = await import("./agent-tools/store.js");
+      const [persona, business] = await Promise.all([
+        loadPersona(this.userId).catch(() => null),
+        loadBusiness().catch(() => null),
+      ]);
+      for (const n of [managed?.name, persona?.name, (business?.name ?? "").split(/\s+/)[0]]) {
+        const t = (n ?? "").trim().toLowerCase();
+        if (t.length >= 3 && !names.includes(t)) names.push(t);
+      }
+    } catch {
+      /* name matching is best-effort */
+    }
+    try {
+      const { loadPersona } = await import("./agent-tools/store.js");
+      const personaForAim = await loadPersona(this.userId).catch(() => null);
+      aimRole = `${managed?.role ?? ""} ${managed?.duty ?? ""} ${personaForAim?.role ?? ""}`.trim();
+    } catch {
+      aimRole = `${managed?.role ?? ""} ${managed?.duty ?? ""}`.trim();
+    }
+    const aim = this.deriveAimText(aimRole, !!managed);
+
+    const ctx: GroupContext = { subject, members, ownRole, addressed: false, names, aim, threshold, managed };
+    this.groupCtxCache.set(chatJid, { at: Date.now(), ctx });
+    if (this.groupCtxCache.size > 200) {
+      const oldest = [...this.groupCtxCache.entries()].sort((a, b) => a[1].at - b[1].at)[0];
+      if (oldest) this.groupCtxCache.delete(oldest[0]);
+    }
+    return ctx;
+  }
+
+  /** Last user texts in a chat (style learning + setup analysis), newest last. */
+  recentUserTexts(chatJid: string, limit = 15): string[] {
+    const log = this.messageLog.get(chatJid);
+    if (!log) return [];
+    const out: string[] = [];
+    for (let i = log.length - 1; i >= 0 && out.length < limit; i--) {
+      const t = (log[i]?.text ?? "").trim();
+      if (!t || log[i].fromMe || /^\[.*\]$/.test(t) || t.length < 3) continue;
+      const short = t.length > 160 ? `${t.slice(0, 160)}…` : t;
+      if (!out.includes(short)) out.push(short);
+    }
+    return out.reverse();
+  }
+
+  /**
+   * Aim of the assistant in a group, derived from its configured role — never
+   * a hardcoded sales bias. The intent probe weighs messages against this aim,
+   * so a support bot, a sales bot, and a vibe moderator each care about
+   * different things.
+   */
+  private deriveAimText(roleText: string, managed: boolean): string {
+    const t = roleText.toLowerCase();
+    if (/(sell|sales?\b|promo|deal|market|vendor|\brep\b|marketer|shop|business)/.test(t)) {
+      return "COMMERCIAL (sales): prices, offers, stock/availability, 'how much', and buying signals are top priority — never ignore a potential deal. Do not hard-sell outside commercial moments.";
+    }
+    if (/(support|help\b|customer care|service|care\b|complaint)/.test(t)) {
+      return "SUPPORT: questions, complaints, and problems are top priority — a member in distress always gets an answer. Do not pitch products unprompted.";
+    }
+    if (/(vibe|mod\b|moderator|community|engag|hype|admin|fun)/.test(t)) {
+      return "COMMUNITY (moderation + vibes): addressed messages, disputes needing a calm word, and hype moments deserve replies; keep order lightly. Never hard-sell.";
+    }
+    return managed
+      ? "GENERAL group assistant: reply when addressed, asked something it can answer, or clearly useful — stay brief and human."
+      : "GENERAL shop assistant: reply when addressed, asked something it can answer, or clearly useful — stay brief and human.";
+  }
+
+  /**
+   * Confidence score: should the bot reply to THIS group message? Structural
+   * signals only (addressing, questions) — intent comes from the aim-aware
+   * probe, not keyword lists. Active by default: base 0.55, reply >= 0.45,
+   * silent < 0.15, middle goes to the probe. Anti-flood stays but is light
+   * so the bot feels present, not numb.
+   */
+  private groupReplyScore(input: {
+    text: string;
+    mentionedMe: boolean;
+    quotedMe: boolean;
+    nameHit: boolean;
+    isOwner: boolean;
+    managed: boolean;
+    recentOurs: number;
+  }): { score: number; reasons: string[] } {
+    const { text, mentionedMe, quotedMe, nameHit, isOwner, managed, recentOurs } = input;
+    if (isOwner) return { score: 1, reasons: ["owner"] };
+    const trimmed = text.trim();
+    const isQuestion = /\?\s*$/.test(trimmed);
+    const addressed = mentionedMe || quotedMe || nameHit;
+    // A bare figure ("150k", "120k last") is never small talk — it may be an
+    // offer, a quote, or an answer. The probe (with context) decides.
+    const hasFigure = /[\d₦$€£]/.test(trimmed) && /\d/.test(trimmed);
+    let score = 0.55;
+    const reasons: string[] = ["base"];
+    if (mentionedMe) {
+      score += 0.45;
+      reasons.push("mentioned");
+    }
+    if (quotedMe) {
+      score += 0.4;
+      reasons.push("quoted-me");
+    }
+    if (nameHit) {
+      score += 0.35;
+      reasons.push("name");
+    }
+    if (isQuestion) {
+      score += 0.3;
+      reasons.push("question");
+    }
+    if (hasFigure) {
+      score += 0.15;
+      reasons.push("figure");
+    }
+    if (managed) {
+      score += 0.15;
+      reasons.push("managed");
+    }
+    if (recentOurs >= 2) {
+      score -= 0.3;
+      reasons.push("dominating");
+    } else if (recentOurs === 1) {
+      score -= 0.15;
+      reasons.push("just-spoke");
+    }
+    const words = trimmed.split(/\s+/).filter(Boolean);
+    if (!addressed && !isQuestion && !hasFigure && words.length <= 8 && trimmed.length < 60) {
+      score -= 0.2;
+      reasons.push("smalltalk");
+    }
+    return { score: Math.max(0, Math.min(1, Math.round(score * 100) / 100)), reasons };
+  }
+
   private historyFor(remoteJid: string): ConversationHistory {
     let history = this.histories.get(remoteJid);
     if (!history) {
@@ -331,6 +653,9 @@ export class WhatsappSession {
     remoteJid: string,
     pushName: string | null | undefined,
   ): void {
+    // Group names come from group metadata (see listGroups) — a member's
+    // pushName must never overwrite the group subject.
+    if (remoteJid.endsWith("@g.us")) return;
     const prev = this.contacts.get(remoteJid);
     if (pushName) {
       this.contacts.set(remoteJid, {
@@ -409,6 +734,8 @@ export class WhatsappSession {
       if ((m.kind ?? "text") !== "text") continue;
       history.append(m.fromMe ? "assistant" : "user", m.text);
     }
+    // Whatever the seed covered must not be re-injected as backdrop later.
+    this.backdropTs.set(remoteJid, log[log.length - 1].ts);
   }
 
   /**
@@ -528,6 +855,9 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
     this.seenMessageIds.clear();
     this.chatChains.clear();
     this.chatActivity.clear();
+    this.backdropTs.clear();
+    this.groupCtxCache.clear();
+    this.echoIds.clear();
     if (global.gc) {
       try {
         global.gc();
@@ -649,14 +979,13 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
 
   /** Own id as participants see it (handles LID vs phone-number id forms). */
   private isSelfParticipant(participantId: string, selfId: string): boolean {
-    if (participantId === selfId) return true;
-    const a = participantId.split("@")[0].replace(/\D/g, "");
-    const b = selfId.split("@")[0].replace(/\D/g, "");
-    if (a.length === 0 || b.length === 0) return false;
-    if (a === b) return true;
-    if (a.length < 7 || b.length < 7) return false;
-    const tail = Math.min(a.length, b.length, 12);
-    return a.slice(-tail) === b.slice(-tail);
+    return isSelfJid(participantId, selfId);
+  }
+
+  /** All known own forms (PN + LID + phoneNumber) for participant matching. */
+  private ownForms(): string[] {
+    const me = this.sock?.user as unknown as { id?: string; lid?: string; phoneNumber?: string } | null | undefined;
+    return [me?.id, me?.lid, me?.phoneNumber].filter((x): x is string => !!x);
   }
 
   /**
@@ -676,11 +1005,11 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
     if (!this.sock || this.status !== "open") {
       throw new Error(`Session ${this.userId} is not connected`);
     }
-    const selfId = this.sock.user?.id ?? "";
     const groups = await this.sock.groupFetchAllParticipating();
     const rows = Object.entries(groups).map(([jid, meta]) => {
       const participants = meta.participants ?? [];
-      const me = participants.find((p) => this.isSelfParticipant(p.id, selfId));
+      const own = this.ownForms();
+      const me = participants.find((p) => own.some((s) => this.isSelfParticipant(p.id, s)));
       const adminFlag = (me as { admin?: string | null } | undefined)?.admin;
       const log = this.messageLog.get(jid);
       return {
@@ -691,11 +1020,23 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
         lastActive: log && log.length > 0 ? log[log.length - 1].ts : 0,
       };
     });
-    return rows.sort((a, b) => {
+    const sorted = rows.sort((a, b) => {
       if (a.isAdmin !== b.isAdmin) return a.isAdmin ? -1 : 1;
       if (b.lastActive !== a.lastActive) return b.lastActive - a.lastActive;
       return a.subject.localeCompare(b.subject);
     });
+    // Seed group subjects into the roster so chats/members never show a
+    // member's pushName as the group name (rememberContact skips groups).
+    for (const r of sorted) {
+      const prev = this.contacts.get(r.jid);
+      this.contacts.set(r.jid, {
+        name: r.subject,
+        lastSeen: prev?.lastSeen ?? 0,
+        imgUrl: prev?.imgUrl ?? null,
+        about: prev?.about,
+      });
+    }
+    return sorted;
   }
 
   /**
@@ -708,13 +1049,14 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
     desc: string;
     members: number;
     isAdmin: boolean;
+    avatar: string | null;
     participants: { jid: string; name: string; admin: boolean }[];
   }> {
     if (!this.sock || this.status !== "open") {
       throw new Error(`Session ${this.userId} is not connected`);
     }
     if (!jid.endsWith("@g.us")) throw new Error("That is not a group chat.");
-    const selfId = this.sock.user?.id ?? "";
+    const ownDetails = this.ownForms();
     const meta = await this.sock.groupMetadata(jid);
     const participants = (meta.participants ?? []).map((p) => {
       const adminFlag = (p as { admin?: string | null }).admin;
@@ -724,14 +1066,16 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
         admin: adminFlag === "admin" || adminFlag === "superadmin",
       };
     });
-    const me = (meta.participants ?? []).find((p) => this.isSelfParticipant(p.id, selfId));
+    const me = (meta.participants ?? []).find((p) => ownDetails.some((s) => this.isSelfParticipant(p.id, s)));
     const meAdmin = (me as { admin?: string | null } | undefined)?.admin;
+    const avatar = await this.getAvatarUrl(jid).catch(() => null);
     return {
       jid,
       subject: meta.subject || "Group",
       desc: meta.desc ?? "",
       members: participants.length,
       isAdmin: meAdmin === "admin" || meAdmin === "superadmin",
+      avatar,
       participants: participants.sort((a, b) => {
         if (a.admin !== b.admin) return a.admin ? -1 : 1;
         return a.name.localeCompare(b.name);
@@ -880,6 +1224,7 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
           contacts: view.contacts,
           messageLog: view.messageLog,
           scheduledTask: { id: taskId, instruction: safeInstruction },
+          group: await this.groupContext(chatJid).catch(() => null),
         });
         await this.sendNaturalReply(chatJid, reply);
         return reply;
@@ -1118,15 +1463,29 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
       if (event.type !== "notify" && event.type !== "append") return;
       const current = this.sock;
       if (!current || current !== sock || epoch !== this.epoch) return;
-
+      // The line's own chat ("Message yourself") is the owner's private
+      // command line: messages the owner sends there MUST be heard, so
+      // fromMe is only skipped for everyone else. Group self-sends stay
+      // skipped (never reply to yourself in a group).
       for (const m of event.messages) {
         // One malformed/poison message must never break the loop or become an
         // unhandled rejection that takes down the session.
         try {
-          if (!m?.key || m.key.fromMe) continue;
+          if (!m?.key) continue;
 
           const remoteJid = m.key.remoteJid;
           if (!remoteJid) continue;
+          const altJid = (m.key as { remoteJidAlt?: string }).remoteJidAlt ?? null;
+          // The line's own chat ("Message yourself") is the owner's private
+          // command line: heard, not skipped. Group self-sends stay skipped
+          // (never reply to yourself in a group).
+          // Sync check first (cheap); fall back to LID-mapping lookup so a
+          // PN session still recognises its LID self-chat and vice versa.
+          let selfChat = this.isOwnChatId(current, remoteJid, altJid);
+          if (m.key.fromMe && !selfChat && !remoteJid.endsWith("@g.us")) {
+            selfChat = await this.resolveOwnChatId(current, remoteJid, altJid).catch(() => false);
+          }
+          if (m.key.fromMe && !selfChat) continue;
 
           const mid = m.key.id ?? "";
           if (!mid || this.markSeen(mid)) continue;
@@ -1134,18 +1493,32 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
           const got = extractIncoming(m);
           if (!got) continue;
 
-          const ts = m.messageTimestamp;
-          await this.handleIncoming({
-            remoteJid,
-            key: { remoteJid, id: m.key.id, fromMe: m.key.fromMe, participant: m.key.participant },
-            text: got.text,
-            kind: got.kind,
-            sentAt: typeof ts === "number" ? ts * 1000 : Number(ts ?? Date.now()),
-            pushName: m.pushName ?? undefined,
-            sock: current,
-            alreadyLogged: false,
-            rawForLog: m,
-          });
+          if (m.key.fromMe && selfChat) {
+            // Our own sends echo back as fromMe. ID match = definitely ours.
+            if (mid && this.echoIds.delete(mid)) continue;
+            // Fast echo (arrived before our send promise resolved): identical
+            // text to what we just sent within 30s = ours, not owner typing.
+            const outLog = this.messageLog.get(remoteJid);
+            const lastOut = outLog ? [...outLog].reverse().find((e) => e.fromMe) : undefined;
+            if (lastOut && got.text !== "" && lastOut.text === got.text && Date.now() - lastOut.ts < 30_000) continue;
+            console.log(`[self-chat] heard owner message in own chat (${got.kind})`);
+          }
+
+        const ts = m.messageTimestamp;
+        await this.handleIncoming({
+          remoteJid,
+          remoteJidAlt: altJid,
+          key: { remoteJid, id: m.key.id, fromMe: m.key.fromMe, participant: m.key.participant },
+          text: got.text,
+          kind: got.kind,
+          mentioned: got.mentioned,
+          quotedParticipant: got.quotedParticipant,
+          sentAt: typeof ts === "number" ? ts * 1000 : Number(ts ?? Date.now()),
+          pushName: m.pushName ?? undefined,
+          sock: current,
+          alreadyLogged: false,
+          rawForLog: m,
+        });
         } catch (err) {
           console.error(`Session ${this.userId} inbound loop: skipping one message:`, err instanceof Error ? err.message : err);
         }
@@ -1165,6 +1538,7 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
    */
   private async handleIncoming(args: {
     remoteJid: string;
+    remoteJidAlt?: string | null;
     key: { remoteJid?: string | null; id?: string | null; fromMe?: boolean | null; participant?: string | null };
     text: string;
     kind: IncomingKind;
@@ -1173,12 +1547,36 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
     sock: ReturnType<typeof makeWASocket>;
     alreadyLogged: boolean;
     rawForLog?: WAMessage;
+    mentioned?: string[];
+    quotedParticipant?: string | null;
   }): Promise<void> {
     const { remoteJid, key, text, kind, sentAt, pushName, sock, alreadyLogged, rawForLog } = args;
+    const mentioned = args.mentioned ?? [];
+    const quotedParticipant = args.quotedParticipant ?? null;
+    const remoteJidAlt = args.remoteJidAlt ?? null;
     const mid = key.id ?? "";
     if (!mid) return;
     const ageMin = Math.max(0, (Date.now() - sentAt) / 60000);
     if (ageMin > 60 * 48) return; // ancient — never blast a reply days late.
+
+    // The line's own chat ("Message yourself") is the owner's private line.
+    // Computed once, used by the STOP check, the access gate, and owner gating.
+    // Sync check first, then LID-mapping lookup (PN session vs LID self-chat).
+    let selfChat = this.isOwnChatId(sock, remoteJid, remoteJidAlt);
+    if (!selfChat && !remoteJid.endsWith("@g.us")) {
+      selfChat = await this.resolveOwnChatId(sock, remoteJid, remoteJidAlt).catch(() => false);
+    }
+    // Fallback: the shop number from settings IS this line. If the socket
+    // hasn't learned its LID yet, the self-chat still matches the shop phone.
+    if (!selfChat) {
+      try {
+        const { isOwnerJid, loadBusiness } = await import("./agent-tools/store.js");
+        const b = await loadBusiness().catch(() => null);
+        if (b?.phone && isOwnerJid(remoteJid, b.phone)) selfChat = true;
+      } catch {
+        /* mapping already failed — gate below stays fail-closed except self */
+      }
+    }
 
     // WhatsApp-guideline opt-out handling. START is checked BEFORE the access
     // gate (blocked chats are dropped below, so an opt-in would never be heard
@@ -1207,15 +1605,32 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
       }
     }
 
+    // The line's own chat is always open, even if the DB is down
+    // (fail-closed gates must never lock the owner out).
     // Access gate FIRST: blacklisted / non-whitelisted chats are dropped
     // entirely — no history, no log, no AI, no reply. Just dropped.
-    if (!(await isChatAllowed(this.userId, remoteJid))) return;
+    if (!selfChat && !(await isChatAllowed(this.userId, remoteJid))) {
+      // Groups get a visible log line: a silent access drop looks exactly
+      // like "the bot is numb", and this tells us which list blocked it.
+      if (remoteJid.endsWith("@g.us")) {
+        const why = await import("./chat-access.js").then((m) => m.accessWhy(this.userId, remoteJid)).catch(() => null);
+        const detail =
+          why?.reason === "blacklisted"
+            ? "it is on the BLOCK list (remove it on the Link page, or someone typed STOP here)"
+            : why?.reason === "not-whitelisted"
+              ? "the line is in EXCLUSIVE (allow-list) mode and this group is not whitelisted"
+              : "the access check hit a DB error (fail-closed)";
+        console.log(`[group-gate] "${remoteJid}" dropped by access gate: ${detail} — no reply attempted.`);
+      }
+      return;
+    }
 
     if (isOptOut && kind === "text") {
       try {
         const { isOwnerJid, loadBusiness } = await import("./agent-tools/store.js");
         const b = await loadBusiness().catch(() => null);
         const senderIsOwner =
+          selfChat ||
           isOwnerJid(remoteJid, b?.phone) ||
           (b?.adminVerified === true && !!b?.adminPhone ? isOwnerJid(remoteJid, b.adminPhone) : false);
         if (!senderIsOwner) {
@@ -1271,11 +1686,55 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
     await this.runExclusive(remoteJid, async () => {
       try {
       this.touch(remoteJid);
+      if (remoteJid.endsWith("@g.us")) {
+        // Groups don't go through rememberContact (name comes from metadata),
+        // but still track liveness for sorting.
+        const prev = this.contacts.get(remoteJid);
+        if (prev) this.contacts.set(remoteJid, { ...prev, lastSeen: Date.now() });
+      }
       await this.ensureHistory(remoteJid);
       const history = this.historyFor(remoteJid);
-      history.append("user", incomingText);
+      const isGroupChat = remoteJid.endsWith("@g.us");
+      // Owner resolution BEFORE history so the model sees WHO is talking.
+      // selfChat (Message yourself) is always owner; admin line + shop
+      // number are owners too. Customers stay unmarked.
+      const { isOwnerJid: isOwnerJidEarly, loadBusiness: loadBusinessEarly } = await import("./agent-tools/store.js");
+      let isOwnerEarly = selfChat;
+      try {
+        const bEarly = await loadBusinessEarly().catch(() => null);
+        if (!isOwnerEarly) {
+          isOwnerEarly =
+            isOwnerJidEarly(remoteJid, bEarly?.phone) ||
+            (bEarly?.adminVerified === true && !!bEarly?.adminPhone
+              ? isOwnerJidEarly(remoteJid, bEarly.adminPhone)
+              : false);
+        }
+      } catch {
+        /* selfChat alone still counts when DB is down */
+      }
+      // Tag group messages with the sender so the model knows WHO said what.
+      // 1:1 owner messages carry [OWNER] so "recap", promos and stock
+      // changes are acted on — the model never confuses owner for customer.
+      const senderName = (pushName ?? "").trim();
+      const baseText =
+        isGroupChat && senderName ? `[${senderName.slice(0, 40)}] ${incomingText}` : incomingText;
+      const displayText = !isGroupChat && isOwnerEarly ? `[OWNER] ${baseText}` : baseText;
+      if (isGroupChat) {
+        // Backdrop: the model otherwise only remembers turns it replied to.
+        // Inject surrounding chatter (newest-last, deduped via watermark) so it
+        // actually knows what's happening in the group.
+        const wm = this.backdropTs.get(remoteJid) ?? 0;
+        const log = this.messageLog.get(remoteJid) ?? [];
+        const fresh = log.filter((e) => e.ts > wm && e.id !== mid).slice(-12);
+        for (const e of fresh) {
+          const t = e.text.length > 220 ? `${e.text.slice(0, 220)}…` : e.text;
+          history.append(e.fromMe ? "assistant" : "user", t);
+        }
+        if (log.length > 0) this.backdropTs.set(remoteJid, log[log.length - 1].ts);
+      }
+      history.append("user", displayText);
       this.rememberContact(remoteJid, pushName ?? undefined);
-      if (!alreadyLogged && rawForLog) this.logIncoming(remoteJid, rawForLog, incomingText, kind);
+      if (!alreadyLogged && rawForLog) this.logIncoming(remoteJid, rawForLog, displayText, kind);
       // All socket writes go through the session-wide serializer: one account,
       // one voice at a time (ban-safe). Receipts below still use the raw sock.
       const psock = this.liveSock() ?? sock;
@@ -1288,18 +1747,10 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
         false,
         psock,
       );
-      // isOwner is resolved inside the agent runner (owner gate needs full
-      // business info); scoped maps still guarantee no cross-chat leakage.
-      const { isOwnerJid, loadBusiness } = await import("./agent-tools/store.js");
-      let isOwner = false;
-      try {
-        const b = await loadBusiness().catch(() => null);
-        isOwner =
-          isOwnerJid(remoteJid, b?.phone) ||
-          (b?.adminVerified === true && !!b?.adminPhone ? isOwnerJid(remoteJid, b.adminPhone) : false);
-      } catch {
-        isOwner = false;
-      }
+      // isOwner was resolved above (owner gate needs full business info);
+      // scoped maps still guarantee no cross-chat leakage.
+      // Reuse the early result — same value, no second DB read.
+      const isOwner = isOwnerEarly;
       scoped.isOwner = isOwner;
       // Owner chats keep the full session view (broadcast audience, cross-chat
       // reports). Customers stay scoped to their own chat — no leakage.
@@ -1307,19 +1758,109 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
         scoped.contacts = this.contacts;
         scoped.messageLog = this.messageLog;
       }
+      // Group reply gate: confidence-scored, so the bot doesn't answer every
+      // message like a bot would. 1:1 chats always reply (unchanged).
+      let group: GroupContext | null = null;
+      if (remoteJid.endsWith("@g.us")) {
+        group = await this.groupContext(remoteJid).catch(() => null);
+        if (group) {
+          const me = sock.user as unknown as { id?: string; lid?: string; phoneNumber?: string } | null | undefined;
+          const selfIds = [me?.id, me?.lid, me?.phoneNumber].filter((x): x is string => !!x);
+          const { isSelfJid: matchSelf } = await import("./agent-tools/store.js");
+          const mentionedMe = mentioned.some((j) => selfIds.some((s) => matchSelf(j, s)));
+          const quotedMe = !!quotedParticipant && selfIds.some((s) => matchSelf(quotedParticipant, s));
+          const lower = incomingText.toLowerCase();
+          const nameHit = group.names.some((n) => n.length >= 3 && lower.includes(n));
+          const log = this.messageLog.get(remoteJid) ?? [];
+          let recentOurs = 0;
+          for (let i = log.length - 1; i >= 0 && recentOurs < 3; i--) {
+            if (log[i]?.fromMe) recentOurs++;
+            else break;
+          }
+          const { score, reasons } = this.groupReplyScore({
+            text: incomingText,
+            mentionedMe,
+            quotedMe,
+            nameHit,
+            isOwner,
+            managed: !!group.managed,
+            recentOurs,
+          });
+          const addressed = mentionedMe || quotedMe || nameHit;
+          group = { ...group, addressed };
+          // Bands: clearly relevant (>= 0.45 and past the group's threshold)
+          // replies now; background noise (< 0.15) stays silent; the ambiguous
+          // middle goes to the aim-aware intent probe instead of a keyword list.
+          const REPLY_AT = 0.45;
+          const SILENT_BELOW = 0.15;
+          let decision: "reply" | "silent" = score >= Math.max(REPLY_AT, group.threshold) || isOwner ? "reply" : "silent";
+          if (decision === "silent" && !isOwner && score >= SILENT_BELOW) {
+            const recent = (this.messageLog.get(remoteJid) ?? [])
+              .slice(-4, -1)
+              .map((e) => (e.text.length > 160 ? `${e.text.slice(0, 160)}…` : e.text));
+            const { probeGroupIntent } = await import("../assistant/agent-runner.js");
+            const probe = await probeGroupIntent({
+              aim: group.aim,
+              subject: group.subject,
+              recent,
+              sender: senderName || remoteJid.split("@")[0],
+              text: incomingText,
+            }).catch(() => null);
+            if (probe && probe.reply && probe.confidence >= group.threshold) {
+              decision = "reply";
+              reasons.push(`probe-yes(${probe.confidence})`);
+            } else if (probe) {
+              reasons.push(`probe-no(${probe.confidence})`);
+            } else {
+              // Probe down (model/timeout) — fall back to the raw score so a
+              // broken probe never mutes the group entirely.
+              reasons.push("probe-failed");
+              if (score >= group.threshold) {
+                decision = "reply";
+                reasons.push("fallback-score");
+              }
+            }
+          }
+          console.log(
+            `[group-gate] "${group.subject}" score=${score} threshold=${group.threshold} -> ${decision} (${reasons.join("+")})`,
+          );
+          if (decision === "silent") {
+            // Truly background chatter: stay silent. No random emoji spam —
+            // only a rare acknowledgement so the bot doesn't look numb.
+            // Most energy goes into actual replies (thresholds lowered above).
+            await markProcessed(this.userId, remoteJid, mid, new Date(sentAt));
+            if (Math.random() < 0.15 && mid) {
+              const picks = ["👍", "❤️"];
+              const emoji = picks[Math.floor(Math.random() * picks.length)];
+              try {
+                await psock.sendMessage(remoteJid, {
+                  react: {
+                    text: emoji,
+                    key: { remoteJid, id: mid, fromMe: false, participant: key.participant ?? null },
+                  },
+                });
+              } catch {
+                /* reactions are cosmetic */
+              }
+            }
+            return;
+          }
+        }
+      }
       const reply = await handleCustomerMessage({
         userId: this.userId,
         customerJid: remoteJid,
-        incomingText,
+        incomingText: displayText,
         history: history.all(),
         sendText: scoped.sendText,
         sock: scoped.sock,
         contacts: scoped.contacts,
         messageLog: scoped.messageLog,
+        group,
       });
       history.append("assistant", reply);
 
-      console.log("User:", incomingText);
+      console.log("User:", displayText);
       console.log("AI:", reply);
 
       // Now that the answer is ready: blue ticks, typing, reply — back to back, like a human.
@@ -1329,7 +1870,14 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
         /* receipts are cosmetic — never block the reply */
       }
       // Caught-up backlog gets an honest human opener, not silence.
-      const finalReply = ageMin > 10 ? `Sorry for the slow reply — ${reply}` : reply;
+      // Owner chats get an [agent] tag so the owner instantly sees who sent
+      // what in self-chat (both sides are fromMe in WhatsApp's UI).
+      // Customer chats stay human — no tag, never smell like a bot.
+      const agedReply = ageMin > 10 ? `Sorry for the slow reply — ${reply}` : reply;
+      const finalReply =
+        isOwner && !remoteJid.endsWith("@g.us") && !agedReply.startsWith("[agent]")
+          ? `[agent] ${agedReply}`
+          : agedReply;
       await this.sendNaturalReply(remoteJid, finalReply, {
         id: key.id,
         participant: key.participant,
@@ -1380,9 +1928,12 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
       const key = target.key ?? { remoteJid: jid, id: target.id, fromMe: false, participant: null };
       await this.handleIncoming({
         remoteJid: jid,
+        remoteJidAlt: (target.key as { remoteJidAlt?: string } | null)?.remoteJidAlt ?? null,
         key,
         text: target.text,
         kind: (target.kind ?? "text") as IncomingKind,
+        mentioned: [],
+        quotedParticipant: null,
         sentAt: target.ts,
         pushName: this.contacts.get(jid)?.name,
         sock,

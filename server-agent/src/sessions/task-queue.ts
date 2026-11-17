@@ -193,7 +193,7 @@ async function cleanupTerminal(): Promise<void> {
 export async function runDueJobs(sessions: SessionManager): Promise<number> {
   await ensureConn();
   const due = await JobModel.find({ status: "pending", runAt: { $lte: new Date() } })
-    .select("_id userId chatJid createdBy createdByIsOwner kind text runAt attempts")
+    .select("_id userId chatJid createdBy createdByIsOwner kind text runAt attempts repeatMs repeatKey")
     .sort({ runAt: 1 })
     .limit(BATCH)
     .lean();
@@ -204,7 +204,7 @@ export async function runDueJobs(sessions: SessionManager): Promise<number> {
       { $set: { status: "running", lastError: "" } },
       { new: true },
     )
-      .select("_id userId chatJid createdBy createdByIsOwner kind text attempts runAt")
+      .select("_id userId chatJid createdBy createdByIsOwner kind text attempts runAt repeatMs repeatKey")
       .lean();
     if (!claimed) continue;
     const rec = claimed as unknown as Record<string, unknown>;
@@ -214,6 +214,9 @@ export async function runDueJobs(sessions: SessionManager): Promise<number> {
     const text = String(rec.text ?? "").slice(0, MAX_TEXT);
     const attempts = Number(rec.attempts ?? 0);
     const executorIsOwner = rec.createdByIsOwner === true;
+    const repeatMs = Math.max(0, Number(rec.repeatMs ?? 0));
+    const repeatKey = String(rec.repeatKey ?? "");
+    const createdBy = String(rec.createdBy ?? "");
     const id = String((claimed as { _id: unknown })._id);
     if (!userId || !chatJid) {
       await JobModel.updateOne({ _id: (claimed as { _id: unknown })._id }, { $set: { status: "failed", lastError: "missing scope" } });
@@ -230,6 +233,25 @@ export async function runDueJobs(sessions: SessionManager): Promise<number> {
       await JobModel.updateOne({ _id: (claimed as { _id: unknown })._id }, { $set: { status: "done" } });
       emitTask("done", userId, chatJid, id, kind);
       done++;
+      // Recurrence: chain the next run (min 1h — faster loops are spam, not engagement).
+      if (repeatMs >= 3_600_000) {
+        const nextAt = new Date(Date.now() + Math.min(repeatMs, 7 * 24 * 3_600_000));
+        await JobModel.create({
+          userId,
+          chatJid,
+          createdBy,
+          createdByIsOwner: executorIsOwner,
+          kind,
+          text,
+          runAt: nextAt,
+          status: "pending",
+          attempts: 0,
+          lastError: "",
+          repeatMs,
+          repeatKey,
+        });
+        armTimerFor(nextAt.getTime());
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       const nextAttempts = attempts + 1;
@@ -308,8 +330,31 @@ export function startTaskServer(sessions: SessionManager): void {
   taskEvents.on("task", (e: { type: TaskLifecycle }) => {
     if (e?.type === "enqueued") void drainDue().catch(() => {});
   });
-  // Prime the exact timer from durable rows, then watch for new webhooks.
-  setImmediate(() => void rearmFromDb().catch(() => {}));
+  setImmediate(() =>
+    (async () => {
+      // Stability: jobs stuck in `running` died with the last boot (crash or
+      // deploy) — return them to pending so nothing is silently lost.
+      try {
+        await ensureMongo();
+        await JobModel.updateMany(
+          { status: "running" },
+          { $set: { status: "pending", lastError: "recovered after restart" } },
+        );
+      } catch {
+        /* next webhook re-arms */
+      }
+      // Access repair: enabled group agents imply their groups are allowed
+      // (covers setups from before auto-whitelisting + hand-deleted rules).
+      try {
+        const { repairManagedAccess } = await import("./agent-tools/group-agent-store.js");
+        const fixed = await repairManagedAccess();
+        if (fixed > 0) console.log(`Task server: re-allowed ${fixed} managed group(s).`);
+      } catch {
+        /* next boot retries */
+      }
+      await rearmFromDb().catch(() => {});
+    })().catch(() => {}),
+  );
   void startWatcher().catch(() => {});
   console.log("Task server started (webhook/event-driven, no polling).");
 }

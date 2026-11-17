@@ -83,6 +83,53 @@ export async function isBlacklisted(userId: string, remoteJid: string): Promise<
   }
 }
 
+/**
+ * Activating a group agent implies the group is allowed through: drop any
+ * block on it and add it to the allow list so EXCLUSIVE mode doesn't swallow
+ * its messages. Visible on the Link page like any manual rule.
+ */
+export async function ensureGroupAllowed(
+  userId: string,
+  remoteJid: string,
+  name?: string,
+): Promise<{ wasBlocked: boolean; whitelisted: boolean }> {
+  await ensureConn();
+  const existing = await ContactRuleView.findOne({ userId, jid: remoteJid }).lean();
+  if (existing?.list === "white") return { wasBlocked: false, whitelisted: false };
+  await ContactRuleView.deleteOne({ userId, jid: remoteJid, list: "black" });
+  await ContactRuleView.updateOne(
+    { userId, jid: remoteJid },
+    { $set: { name: (name ?? "unknown").slice(0, 120), list: "white" } },
+    { upsert: true },
+  );
+  invalidateChatAccess(userId);
+  return { wasBlocked: !!existing && existing.list === "black", whitelisted: true };
+}
+
+/** Remove an auto-added allow entry when its group agent is switched off. */
+export async function removeAutoWhitelist(userId: string, remoteJid: string): Promise<void> {
+  await ensureConn();
+  await ContactRuleView.deleteOne({ userId, jid: remoteJid, list: "white" });
+  invalidateChatAccess(userId);
+}
+
+/** Why a chat is allowed or dropped — for diagnostics (a silent drop looks like a dead bot). */
+export async function accessWhy(
+  userId: string,
+  remoteJid: string,
+): Promise<{ allowed: boolean; reason: "allowed" | "blacklisted" | "not-whitelisted" | "db-unreachable" }> {
+  try {
+    const access = await loadAccess(userId);
+    if (access.black.has(remoteJid)) return { allowed: false, reason: "blacklisted" };
+    if (access.mode === "exclusive" && !access.white.has(remoteJid)) {
+      return { allowed: false, reason: "not-whitelisted" };
+    }
+    return { allowed: true, reason: "allowed" };
+  } catch {
+    return { allowed: false, reason: "db-unreachable" };
+  }
+}
+
 /** STOP / opt-out: block future broadcasts + agent replies for this chat. */
 export async function addToBlacklist(userId: string, remoteJid: string, name?: string): Promise<void> {
   await ensureConn();

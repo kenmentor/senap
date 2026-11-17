@@ -20,6 +20,10 @@ interface JobRow {
   /** Exact message (kind=send) or instruction for the agent (kind=agent). */
   text: string;
   runAt: Date;
+  /** Recurrence: when > 0 the dispatcher re-enqueues the next run this many ms later. */
+  repeatMs: number;
+  /** Groups a repeat chain (e.g. one group's engagement loop) for cancel/replace. */
+  repeatKey: string;
   status: JobStatus;
   attempts: number;
   lastError: string;
@@ -35,6 +39,8 @@ const JobSchema = new Schema<JobRow>(
     kind: String,
     text: String,
     runAt: Date,
+    repeatMs: { type: Number, default: 0 },
+    repeatKey: { type: String, default: "" },
     status: { type: String, default: "pending" },
     attempts: { type: Number, default: 0 },
     lastError: { type: String, default: "" },
@@ -45,6 +51,7 @@ const JobSchema = new Schema<JobRow>(
 JobSchema.index({ status: 1, runAt: 1 });
 JobSchema.index({ userId: 1, status: 1, runAt: 1 });
 JobSchema.index({ userId: 1, chatJid: 1, status: 1 });
+JobSchema.index({ userId: 1, repeatKey: 1, status: 1 });
 
 export const JobModel =
   mongoose.models.AgentJob ?? mongoose.model<JobRow>("AgentJob", JobSchema);
@@ -161,6 +168,7 @@ export const jobTools: ToolDefinition[] = [
           kind: d.kind,
           text: d.text,
           runAt: d.runAt instanceof Date ? d.runAt.toISOString() : String(d.runAt),
+          ...(d.repeatMs > 0 ? { repeatsEveryHours: Math.round((d.repeatMs / 3_600_000) * 10) / 10 } : {}),
         })),
       };
     },

@@ -487,4 +487,43 @@ export const chatTools: ToolDefinition[] = [
       }
     },
   },
+  {
+    name: "get_recap",
+    description:
+      "OWNER ONLY. Summarise recent shop activity for the owner (recap / report / what happened today). Returns per-chat counts, latest messages and escalation hints across ALL chats. Call this when the owner asks 'recap', 'summary', 'report', 'what did I miss', 'how is business'. Then write a short human summary from the result — never paste raw JIDs.",
+    scope: "owner",
+    parameters: {
+      type: "object",
+      properties: {
+        limit: { type: "number", description: "Max chats to include (default 10, max 20)." },
+        perChat: { type: "number", description: "Recent messages per chat (default 3, max 5)." },
+      },
+      additionalProperties: false,
+    },
+    execute: async (args, ctx) => {
+      const limit = Math.min(Math.max(toolArgs.asNumber(args.limit, 10), 1), 20);
+      const perChat = Math.min(Math.max(toolArgs.asNumber(args.perChat, 3), 1), 5);
+      const rows: { chat: string; name: string; total: number; recent: { fromMe: boolean; text: string; at: string }[] }[] = [];
+      for (const [jid, messages] of ctx.messageLog) {
+        if (jid === "status@broadcast" || jid.endsWith("@newsletter")) continue;
+        const recent = messages.slice(-perChat).map((m) => ({
+          fromMe: m.fromMe,
+          text: m.text.length > 200 ? `${m.text.slice(0, 200)}…` : m.text,
+          at: new Date(m.ts).toISOString(),
+        }));
+        rows.push({
+          chat: jid,
+          name: ctx.contacts.get(jid)?.name ?? jid.split("@")[0],
+          total: messages.length,
+          recent,
+        });
+      }
+      rows.sort((a, b) => {
+        const aLast = a.recent[a.recent.length - 1]?.at ?? "";
+        const bLast = b.recent[b.recent.length - 1]?.at ?? "";
+        return bLast.localeCompare(aLast);
+      });
+      return { chats: rows.slice(0, limit), totalChats: rows.length };
+    },
+  },
 ];

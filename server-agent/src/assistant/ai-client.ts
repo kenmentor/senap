@@ -17,6 +17,7 @@ export default class AiClient {
   async chat(
     messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
     tools: OpenAI.Chat.Completions.ChatCompletionTool[] = [],
+    opts?: { timeoutMs?: number; maxTokens?: number },
   ) {
     // Bound context/cost: cap message count + per-message chars (no unbounded
     // captions/tool outputs blowing up RAM or the Cloudflare bill).
@@ -40,13 +41,13 @@ export default class AiClient {
       this.ai.chat.completions.create({
         model: this.model_name,
         messages: slim,
-        max_tokens: 1200,
+        max_tokens: opts?.maxTokens ?? 1200,
         ...(tools?.length && { tools, tool_choice: "auto" }),
       }) as Promise<{
         choices: { message: { content: string | null; tool_calls?: ToolCallWire[] }; finish_reason: string }[];
         usage?: unknown;
       }>,
-      30_000,
+      opts?.timeoutMs ?? 30_000,
     ));
 
     const result = response.choices[0];

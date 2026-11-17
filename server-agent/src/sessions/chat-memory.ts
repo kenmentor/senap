@@ -49,6 +49,21 @@ export function appendChatMemory(userId: string, chatJid: string, role: "user" |
   })();
 }
 
+/** Count durable messages for a chat since a point in time (quota checks). */
+export async function countMessages(
+  userId: string,
+  chatJid: string,
+  role: "user" | "assistant",
+  since: Date,
+): Promise<number> {
+  try {
+    await ensureMongo();
+    return await ChatMemoryModel.countDocuments({ userId, chatJid, role, ts: { $gte: since } });
+  } catch {
+    return 0;
+  }
+}
+
 /** Load the most recent durable messages for a chat (cold-start refill). */
 export async function loadChatMemory(
   userId: string,

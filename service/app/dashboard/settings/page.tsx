@@ -224,10 +224,10 @@ export default function SettingsPage() {
           </div>
         </Section>
 
-        <Section icon={ShieldCheck} title="Reports & admin control" sub="She sends reports here, and only takes owner commands from a verified number.">
+        <Section icon={ShieldCheck} title="Reports & admin control" sub="She sends reports here, and only takes owner commands from this number — or from each line's own chat when left empty (default).">
           <div className="grid gap-3">
             <label className="grid gap-1.5">
-              <span className="text-[12px] font-medium" style={{ color: "#8a949b" }}>Admin WhatsApp (private)</span>
+              <span className="text-[12px] font-medium" style={{ color: "#8a949b" }}>Admin WhatsApp (private) — leave empty to use each line&apos;s own number</span>
               <div className="flex gap-2">
                 <input
                   value={adminPhone}
@@ -245,6 +245,23 @@ export default function SettingsPage() {
                 >
                   {adminVerified ? "Verified" : "Unverified"}
                 </span>
+              </div>
+              <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                <span className="text-[11.5px]" style={{ color: "#636c73" }}>
+                  {adminPhone.trim()
+                    ? "Commands + escalations go to this number once verified."
+                    : "Empty = each line answers to itself (message the line's own chat to command it)."}
+                </span>
+                {adminPhone.trim() && (
+                  <button
+                    type="button"
+                    onClick={() => { setAdminPhone(""); setAdminVerified(false); setOtpSent(false); setOtpCode(""); flash("Cleared — hit Save all. Each line now answers to itself."); }}
+                    className="rounded-lg px-2.5 py-1 text-[11.5px] font-semibold"
+                    style={{ background: "rgba(255,255,255,0.06)", color: "#aebac1", border: "1px solid rgba(255,255,255,0.12)" }}
+                  >
+                    Use line&apos;s own number instead
+                  </button>
+                )}
               </div>
             </label>
             <label className="grid gap-1.5">

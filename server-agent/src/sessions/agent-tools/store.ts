@@ -323,6 +323,54 @@ export function currencySymbol(currency: string | undefined): string {
 }
 
 /**
+ * Split a JID into its bare user + server, stripping device (:xx) and
+ * agent (_x) suffixes so `234801...:12@s.whatsapp.net` still matches
+ * `234801...@s.whatsapp.net`. c.us is treated as s.whatsapp.net.
+ */
+export function splitJid(jid: string | null | undefined): { user: string; server: string } {
+  if (!jid) return { user: "", server: "" };
+  const at = jid.lastIndexOf("@");
+  const rawUser = (at >= 0 ? jid.slice(0, at) : jid).toLowerCase();
+  let server = (at >= 0 ? jid.slice(at + 1) : "").toLowerCase();
+  if (server === "c.us") server = "s.whatsapp.net";
+  const noDevice = rawUser.split(":")[0];
+  const bareUser = noDevice.split("_")[0];
+  return { user: bareUser, server };
+}
+
+function jidFamily(server: string): "pn" | "lid" | "other" {
+  if (server === "s.whatsapp.net" || server === "hosted") return "pn";
+  if (server === "lid" || server === "hosted.lid") return "lid";
+  return "other";
+}
+
+/**
+ * True when the chatter is the line itself ("Message yourself" self-chat).
+ * This is the DEFAULT owner: every line answers to its own number unless a
+ * separate verified admin number is set in the dashboard.
+ *
+ * Digit-tail matching only applies within the same family (PN vs PN, or
+ * LID vs LID) — a PN tail can never equal a LID tail, they are different
+ * namespaces (Baileys v7 mixes @s.whatsapp.net and @lid forms).
+ */
+export function isSelfJid(customerJid: string, selfJid: string | null | undefined): boolean {
+  if (!selfJid) return false;
+  const me = splitJid(selfJid);
+  const caller = splitJid(customerJid);
+  if (!me.user || !caller.user) return false;
+  if (me.user === caller.user) return true;
+  // Same bare digits but different formatting (leading +, spaces)?
+  const selfDigits = me.user.replace(/\D/g, "");
+  const callerDigits = caller.user.replace(/\D/g, "");
+  if (selfDigits && selfDigits === callerDigits) return true;
+  if (selfDigits.length < 7 || callerDigits.length < 7) return false;
+  // Cross-namespace (PN vs LID) tails must never match.
+  if (me.server && caller.server && jidFamily(me.server) !== jidFamily(caller.server)) return false;
+  const tail = Math.min(selfDigits.length, callerDigits.length, 12);
+  return selfDigits.slice(-tail) === callerDigits.slice(-tail);
+}
+
+/**
  * True when the chatter is the shop owner, matched by phone digits in code
  * (suffix match so country-code formatting differences still match).
  * Unknown/unmatched callers are never owners — deny by default.
