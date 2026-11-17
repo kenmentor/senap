@@ -46,40 +46,41 @@ async function forward(req: Request, path: string[]) {
   }
 }
 
-async function allowed(path: string[]): Promise<boolean> {
+async function allowed(path: string[]): Promise<"ok" | "signed-out" | "foreign"> {
   // Only line-scoped session paths, and only the caller's own lines.
   // (Aggregate endpoints like sessions/recent are served by /api/activity,
   // which scopes server-side — they stay unreachable from the browser.)
-  if (path[0] !== "sessions" || !path[1] || LINE_FREE.has(path[1])) return false;
+  if (path[0] !== "sessions" || !path[1] || LINE_FREE.has(path[1])) return "foreign";
   const me = await sessionUser();
-  if (!me) return false;
-  return lineVisible(me.id, path[1]);
+  if (!me) return "signed-out";
+  return (await lineVisible(me.id, path[1])) ? "ok" : "foreign";
+}
+
+function gate(path: string[]) {
+  return (async () => {
+    const verdict = await allowed(path);
+    if (verdict === "ok") return null;
+    return NextResponse.json(
+      verdict === "signed-out"
+        ? { error: "Session expired — sign in again.", code: "signed-out" }
+        : { error: "That device name belongs to another account — pick a different name.", code: "foreign-line" },
+      { status: verdict === "signed-out" ? 401 : 403 },
+    );
+  })();
 }
 
 export async function GET(req: Request, { params }: { params: { path: string[] } }) {
-  if (!(await allowed(params.path))) {
-    return NextResponse.json({ error: "Not signed in, or not your line." }, { status: 403 });
-  }
-  return forward(req, params.path);
+  return (await gate(params.path)) ?? forward(req, params.path);
 }
 
 export async function POST(req: Request, { params }: { params: { path: string[] } }) {
-  if (!(await allowed(params.path))) {
-    return NextResponse.json({ error: "Not signed in, or not your line." }, { status: 403 });
-  }
-  return forward(req, params.path);
+  return (await gate(params.path)) ?? forward(req, params.path);
 }
 
 export async function PUT(req: Request, { params }: { params: { path: string[] } }) {
-  if (!(await allowed(params.path))) {
-    return NextResponse.json({ error: "Not signed in, or not your line." }, { status: 403 });
-  }
-  return forward(req, params.path);
+  return (await gate(params.path)) ?? forward(req, params.path);
 }
 
 export async function DELETE(req: Request, { params }: { params: { path: string[] } }) {
-  if (!(await allowed(params.path))) {
-    return NextResponse.json({ error: "Not signed in, or not your line." }, { status: 403 });
-  }
-  return forward(req, params.path);
+  return (await gate(params.path)) ?? forward(req, params.path);
 }

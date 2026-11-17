@@ -1,6 +1,6 @@
 import type { ToolDefinition } from "./tool-types.js";
 import { toolArgs } from "./tool-types.js";
-import { normalizeJid, resolveImageUrl } from "./store.js";
+import { normalizeJid, resolveImageUrl, findProductByIdOrSku } from "./store.js";
 import type { BufferedMessage } from "./tool-types.js";
 
 function chatOf(ctxJid: string, to: string): string {
@@ -324,7 +324,7 @@ export const chatTools: ToolDefinition[] = [
   },
   {
     name: "send_media",
-    description: "Send photos (or one video/voice note/document) from public URLs to the current chat. Use it to share product photos, receipts, or catalogs. MULTIPLE PHOTOS: pass them all in ONE call via `urls` (with matching `captions`) — they arrive back-to-back and group like a native album. NEVER paste image URLs as text links. (Other chats: owner only.)",
+    description: "Send photos (or one video/voice note/document) from public URLs — or `store-photo:<id>` references straight from search_products (embedded store photos) — to the current chat. Use it to share product photos, receipts, or catalogs. MULTIPLE PHOTOS: pass them all in ONE call via `urls` (with matching `captions`) — they arrive back-to-back and group like a native album. NEVER paste image URLs as text links. (Other chats: owner only.)",
     scope: "owner",
     allowCurrentChat: true,
     targetOf: (args, ctx) => chatOf(ctx.customerJid, toolArgs.asString(args.to)),
@@ -362,7 +362,25 @@ export const chatTools: ToolDefinition[] = [
       const raws = [...toolArgs.asStringArray(args.urls), toolArgs.asString(args.url)]
         .map((s) => s.trim())
         .filter(Boolean);
-      const urls = [...new Set(raws.map(resolve).filter((u) => /^https?:\/\//i.test(u)))].slice(0, 5);
+      // `store-photo:<id>` refs (embedded status-import photos) resolve to bytes
+      // here so blobs never travel through the model — cap 6MB encoded.
+      const buffers = new Map<string, Buffer>();
+      const resolved: string[] = [];
+      for (const raw of raws) {
+        if (raw.startsWith("store-photo:")) {
+          const id = raw.slice("store-photo:".length).trim();
+          const p = id ? await findProductByIdOrSku(id, ctx.userId).catch(() => null) : null;
+          const m = (p?.image ?? "").match(/^data:((?:image|video)\/[a-z0-9+.-]+);base64,([A-Za-z0-9+/=]+)$/i);
+          if (m && m[2].length <= 8_000_000) {
+            buffers.set(raw, Buffer.from(m[2], "base64"));
+            resolved.push(raw);
+          }
+          continue;
+        }
+        const u = resolve(raw);
+        if (/^https?:\/\//i.test(u)) resolved.push(u);
+      }
+      const urls = [...new Set(resolved)].slice(0, 5);
       const kind = toolArgs.asString(args.kind, "image").trim() || "image";
       if (urls.length === 0) {
         return {
@@ -388,10 +406,15 @@ export const chatTools: ToolDefinition[] = [
       for (let i = 0; i < urls.length; i++) {
         const url = urls[i];
         const caption = captions[i]?.trim() || (i === 0 ? firstCaption : undefined);
+        const buf = buffers.get(url);
         try {
-          if (kind === "image") await ctx.sock.sendMessage(jid, { image: { url }, caption });
-          else if (kind === "video") await ctx.sock.sendMessage(jid, { video: { url }, caption });
-          else if (kind === "audio") await ctx.sock.sendMessage(jid, { audio: { url }, mimetype: "audio/ogg; codecs=opus" });
+          if (kind === "image") {
+            if (buf) await ctx.sock.sendMessage(jid, { image: buf, caption });
+            else await ctx.sock.sendMessage(jid, { image: { url }, caption });
+          } else if (kind === "video") {
+            if (buf) await ctx.sock.sendMessage(jid, { video: buf, caption });
+            else await ctx.sock.sendMessage(jid, { video: { url }, caption });
+          } else if (kind === "audio") await ctx.sock.sendMessage(jid, { audio: { url }, mimetype: "audio/ogg; codecs=opus" });
           else {
             await ctx.sock.sendMessage(jid, {
               document: { url },

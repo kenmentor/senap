@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { dbConnect, docId } from "@/lib/db/mongoose";
 import { Settings } from "@/lib/db/models/Settings";
 import { sessionUser, signedOut } from "@/lib/auth-helpers";
+import { slugForOwner } from "@/lib/storefront";
 
 function dbError() {
   return NextResponse.json({ error: "Database is offline." }, { status: 503 });
@@ -17,6 +18,12 @@ export async function GET() {
     if (!doc) {
       const created = await Settings.create({ key: me.id, ownerId: me.id });
       doc = created.toObject();
+    }
+    // Every owner gets a unique public store address (their username),
+    // minted once from their account/business name.
+    if (!((doc as { storeSlug?: unknown }).storeSlug ?? "").toString().trim()) {
+      await slugForOwner(me.id).catch(() => {});
+      doc = (await Settings.findOne({ ownerId: me.id }).lean()) ?? doc;
     }
     const { adminOtpHash: _omit, ...safe } = doc as unknown as Record<string, unknown>;
     void _omit;

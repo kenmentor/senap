@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Plus, RefreshCw, Check, MessageCircle, Clock3, Zap, X, Sparkles, Send } from "lucide-react";
-import { formatUpdated, lowCount, statusOf, thumbFor, LOW_AT, type Item } from "@/lib/demo/catalog";
+import { lowCount, statusOf, thumbFor, LOW_AT, type Item } from "@/lib/demo/catalog";
 
 type RecentChat = { userId: string; jid: string; name: string; imgUrl?: string | null; text: string; fromMe: boolean; ts: number; messages: number };
 type ScheduledJob = { id: string; userId: string; chat: string; kind: string; text: string; runAt: string };
@@ -84,9 +84,6 @@ function ScheduledRow({ job, onCancel }: { job: ScheduledJob; onCancel: (id: str
               {due}
             </span>
           ) : null}
-          <span className="text-[10.5px] font-medium" style={{ color: "#8a949b" }}>
-            {composed ? "She composes it fresh" : "Sends as-is"}
-          </span>
         </span>
       </span>
       <button onClick={() => onCancel(job.id)} aria-label="Cancel task" title="Cancel" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition hover:bg-white/10 active:bg-white/15 sm:h-8 sm:w-8" style={{ color: "#8a949b" }}>
@@ -265,18 +262,20 @@ export default function DashboardHome() {
 
   return (
     <div>
-      <div className="mb-3.5 flex items-center justify-between gap-2">
-        <p className="text-[12px]" style={{ color: "#636c73" }}>
-          {updatedAt ? `Updated ${chatTimeAgo(updatedAt)}` : "Loading live metrics…"}
-          {!agentOnline ? " · agent unreachable (:3001 or AGENT_API_KEY mismatch)" : ""}
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <p className="flex items-center gap-1.5 text-[12px]" style={{ color: "#636c73" }}>
+          <span className="h-1.5 w-1.5 rounded-full" style={{ background: agentOnline ? "#00a884" : "#e66a6a" }} />
+          {updatedAt ? `Updated ${chatTimeAgo(updatedAt)}` : "Loading…"}
         </p>
         <button
           onClick={refresh}
           disabled={refreshing}
-          className="flex min-h-[44px] items-center gap-1.5 rounded-lg px-3.5 py-2 text-[12.5px] font-semibold transition active:scale-95 disabled:opacity-50"
+          aria-label="Refresh"
+          title="Refresh"
+          className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg transition active:scale-95 disabled:opacity-50"
           style={{ background: "rgba(255,255,255,0.06)", color: "#e9edef", border: "1px solid rgba(255,255,255,0.1)" }}
         >
-          <RefreshCw size={14} className={refreshing ? "animate-spin" : ""} /> {refreshing ? "Refreshing…" : "Refresh"}
+          <RefreshCw size={16} className={refreshing ? "animate-spin" : ""} />
         </button>
       </div>
       {/* 3 stats — live from /api/activity, fallback while offline.
@@ -304,12 +303,12 @@ export default function DashboardHome() {
             </Link>
           </div>
           {!agentOnline ? (
-            <p className="mt-4 rounded-xl p-4 text-center text-[13px]" style={{ background: "rgba(230,106,106,0.08)", color: "#e66a6a", border: "1px solid rgba(230,106,106,0.3)" }}>
-              Agent unreachable — start it on :3001 and set the same AGENT_API_KEY in both .env files, then hit Refresh.
+            <p className="mt-4 flex items-center justify-center gap-2 rounded-xl p-4 text-center text-[13px] font-semibold" style={{ background: "rgba(230,106,106,0.08)", color: "#e66a6a", border: "1px solid rgba(230,106,106,0.3)" }}>
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full" style={{ background: "#e66a6a" }} /> Agent offline
             </p>
           ) : chats.length === 0 ? (
-            <p className="mt-4 rounded-xl p-4 text-center text-[13px]" style={{ background: "rgba(255,255,255,0.03)", color: "#636c73", border: "1px dashed rgba(255,255,255,0.12)" }}>
-              No conversations yet — chats land here the moment anyone messages.
+            <p className="mt-4 flex items-center justify-center gap-2 rounded-xl p-4 text-center text-[13px]" style={{ background: "rgba(255,255,255,0.03)", color: "#636c73", border: "1px dashed rgba(255,255,255,0.12)" }}>
+              <MessageCircle size={15} /> No chats yet
             </p>
           ) : (
             <ul className="mt-2 flex flex-col">
@@ -344,13 +343,8 @@ export default function DashboardHome() {
             </span>
           </div>
           {scheduled.length === 0 ? (
-            <div className="mt-3 flex items-center gap-3 rounded-2xl p-4" style={{ background: "rgba(255,255,255,0.02)", border: "1px dashed rgba(255,255,255,0.1)" }}>
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl" style={{ background: "rgba(255,255,255,0.05)", color: "#636c73" }}>
-                <Clock3 size={16} />
-              </span>
-              <p className="text-[12.5px] leading-snug" style={{ color: "#8a949b" }}>
-                Nothing queued — tell her <span style={{ color: "#cfd6db" }}>“remind me…”</span>, <span style={{ color: "#cfd6db" }}>“send the promo at 9am”</span>, or <span style={{ color: "#cfd6db" }}>“follow up tomorrow”</span> in any chat.
-              </p>
+            <div className="mt-3 flex items-center justify-center gap-2 rounded-2xl p-4 text-[12.5px]" style={{ background: "rgba(255,255,255,0.02)", border: "1px dashed rgba(255,255,255,0.1)", color: "#8a949b" }}>
+              <Clock3 size={15} /> Nothing lined up
             </div>
           ) : (
             <ul className="mt-3 flex max-h-[320px] flex-col gap-2 overflow-y-auto">
@@ -378,7 +372,7 @@ export default function DashboardHome() {
                   )}
                 </div>
                 {ranked.length === 0 ? (
-                  <p className="mt-2 text-[12px]" style={{ color: "#636c73" }}>No tool calls recorded yet in this window.</p>
+                  <p className="mt-2 flex items-center gap-2 text-[12px]" style={{ color: "#636c73" }}><Zap size={13} /> No activity yet</p>
                 ) : (
                   <ul className="mt-2.5 flex flex-col gap-2">
                     {ranked.map((t, i) => (
@@ -407,12 +401,9 @@ export default function DashboardHome() {
       {/* Traffic graph + cost consumed */}
       <div className="mt-2.5 rounded-2xl p-4 sm:mt-3.5 sm:p-6" style={{ border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.025)" }}>
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <div>
-            <h2 className="text-[15px] font-semibold" style={{ color: "#e9edef" }}>Traffic</h2>
-            <p className="mt-0.5 text-[12.5px]" style={{ color: "#636c73" }}>Messages your agent handled · last 14 days</p>
-          </div>
-          <p className="text-[12.5px] font-semibold" style={{ color: "#00a884" }}>
-            {trafficTotal !== null ? `${trafficTotal.toLocaleString()} total` : "live traffic · last 14 days"}
+          <h2 className="text-[15px] font-semibold" style={{ color: "#e9edef" }}>Traffic</h2>
+          <p className="text-[12.5px] font-semibold tabular-nums" style={{ color: "#00a884" }}>
+            {trafficTotal !== null ? trafficTotal.toLocaleString() : "—"}
           </p>
         </div>
 
@@ -436,9 +427,9 @@ export default function DashboardHome() {
 
         <div className="mt-5" style={{ borderTop: "1px solid rgba(255,255,255,0.07)", paddingTop: 16 }}>
           <div className="flex items-baseline justify-between gap-2">
-            <p className="text-[13px] font-semibold" style={{ color: "#e9edef" }}>Cost consumed</p>
-            <p className="text-[12.5px]" style={{ color: "#8a949b" }}>
-              {cost ? `${cost.used} of ${cost.total} replies · ${cost.pct}%` : "waiting for live data…"}
+            <p className="text-[13px] font-semibold" style={{ color: "#e9edef" }}>Cost</p>
+            <p className="text-[12.5px] tabular-nums" style={{ color: "#8a949b" }}>
+              {cost ? `${cost.used} / ${cost.total} · ${cost.pct}%` : "—"}
             </p>
           </div>
           <div className="mt-2.5 h-2 overflow-hidden rounded-full" style={{ background: "rgba(255,255,255,0.07)" }}>
@@ -451,7 +442,7 @@ export default function DashboardHome() {
       <div className="mt-2.5 rounded-2xl p-4 sm:mt-3.5 sm:p-6" style={{ border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.025)" }}>
         <div className="flex items-baseline justify-between gap-2">
           <div className="flex items-center gap-2.5">
-            <h2 className="text-[15px] font-semibold" style={{ color: "#e9edef" }}>Urgent restocks</h2>
+            <h2 className="text-[15px] font-semibold" style={{ color: "#e9edef" }}>Restocks</h2>
             {urgent.length > 0 && (
               <span className="rounded-full px-2.5 py-1 text-[11px] font-bold" style={{ background: "rgba(230,106,106,0.14)", color: "#e66a6a" }}>
                 {urgent.length}
@@ -477,14 +468,16 @@ export default function DashboardHome() {
           </div>
         ) : dbDown ? (
           <div className="mt-4 flex items-center justify-between gap-3 rounded-xl p-4" style={{ border: "1px dashed rgba(230,106,106,0.4)" }}>
-            <p className="text-[13px]" style={{ color: "#e66a6a" }}>Can&apos;t reach the database.</p>
-            <button onClick={load} className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-[12.5px] font-semibold" style={{ background: "#00a884", color: "#04241d" }}>
-              <RefreshCw size={14} /> Retry
+            <p className="flex items-center gap-2 text-[13px] font-semibold" style={{ color: "#e66a6a" }}>
+              <span className="h-1.5 w-1.5 rounded-full" style={{ background: "#e66a6a" }} /> Offline
+            </p>
+            <button onClick={load} aria-label="Retry" title="Retry" className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg transition active:scale-95" style={{ background: "#00a884", color: "#04241d" }}>
+              <RefreshCw size={16} />
             </button>
           </div>
         ) : urgent.length === 0 ? (
-            <p className="mt-4 flex items-center justify-center gap-2 rounded-xl p-4 text-center text-[13px]" style={{ background: "rgba(0,168,132,0.08)", color: "#00a884", border: "1px solid rgba(0,168,132,0.25)" }}>
-              All stocked up — nothing needs restocking. <Check size={15} strokeWidth={3} />
+            <p className="mt-4 flex items-center justify-center gap-2 rounded-xl p-4 text-center text-[13px] font-semibold" style={{ background: "rgba(0,168,132,0.08)", color: "#00a884", border: "1px solid rgba(0,168,132,0.25)" }}>
+              <Check size={15} strokeWidth={3} /> All stocked up
             </p>
         ) : (
           <div className="mt-4 flex flex-col">
@@ -494,9 +487,8 @@ export default function DashboardHome() {
                 <img src={p.image || thumbFor(p, 0)} alt="" draggable={false} className="h-11 w-11 shrink-0 rounded-xl object-cover" style={{ border: "1px solid rgba(255,255,255,0.1)" }} />
                 <div className="min-w-0 flex-1 basis-40">
                   <p className="truncate text-[13.5px] font-medium" style={{ color: "#e9edef" }}>{p.name}</p>
-                  <p className="mt-0.5 text-[11.5px]" style={{ color: "#8a949b" }}>
-                    <span style={lowCount}>{p.quantity} left</span>
-                    <span className="hidden sm:inline"> · {p.sold} sold · Updated {formatUpdated(p.updatedAt)}</span>
+                  <p className="mt-1 text-[11.5px] font-bold tabular-nums" style={lowCount}>
+                    {p.quantity} left
                   </p>
                 </div>
                 <span className="hidden rounded-full px-2.5 py-1 text-[10.5px] font-semibold sm:inline" style={{ background: statusOf(p).bg, color: statusOf(p).color }}>

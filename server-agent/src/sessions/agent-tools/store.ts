@@ -131,6 +131,14 @@ const AccountView =
     ),
   );
 
+/** Dashboard users (for username-based store addresses). */
+const OwnerView =
+  mongoose.models.ToolUser ??
+  mongoose.model(
+    "ToolUser",
+    new Schema({ name: String, email: String }, { collection: "users" }),
+  );
+
 const ownerCache = new Map<string, { at: number; owner: string | null }>();
 const OWNER_CACHE_TTL_MS = 60_000;
 
@@ -258,6 +266,42 @@ function asFiniteNumber(v: unknown, fallback: number): number {
 }
 
 /**
+ * Create one shop product (Status auto-import, dashboard adds). Returns the
+ * new id + name, or null when the DB write fails. Cost mirrors price (margin
+ * unknown until the owner sets it) — never invent a cheaper cost.
+ */
+export async function createShopProduct(input: {
+  ownerId?: string | null;
+  name: string;
+  description: string;
+  unitPrice: number;
+  quantity: number;
+  condition: "New" | "UK Used" | "Used";
+  image?: string;
+  category?: string;
+}): Promise<{ id: string; name: string } | null> {
+  await ensureConn();
+  const qty = Math.max(0, Math.floor(input.quantity));
+  const price = Math.max(0, input.unitPrice);
+  const doc = await ProductView.create({
+    name: input.name.trim().slice(0, 200) || "New arrival",
+    sku: `STS-${Date.now().toString(36).slice(-6).toUpperCase()}`,
+    quantity: qty,
+    unitPrice: price,
+    costPrice: price,
+    category: (input.category ?? "General").trim().slice(0, 60) || "General",
+    status: qty <= 0 ? "Out" : qty <= 5 ? "Low" : "Available",
+    condition: input.condition,
+    description: input.description.slice(0, 1000),
+    image: input.image ?? "",
+    sold: 0,
+    ...(input.ownerId ? { ownerId: input.ownerId } : {}),
+  }).catch(() => null);
+  if (!doc) return null;
+  return { id: String(doc._id), name: doc.name as string };
+}
+
+/**
  * Bulk catalog seed (dashboard migrations, local -> cloud moves). Upserts by
  * SKU (fallback: exact name), so re-runs are safe. Returns match/insert counts.
  */
@@ -324,8 +368,13 @@ export function resolveImageUrl(image: string | undefined): string {
 
 function toShopProduct(d: ProductRow): ShopProduct {
   const image = (d.image ?? "").trim();
+  const id = String(d._id);
+  // Embedded store photos (status imports) travel as a short `store-photo:<id>`
+  // reference so multi-KB blobs never touch the model's context — send_media
+  // resolves the reference back to bytes at send time.
+  const imageUrl = image.startsWith("data:") ? `store-photo:${id}` : resolveImageUrl(image);
   return {
-    id: String(d._id),
+    id,
     name: d.name,
     sku: d.sku,
     quantity: d.quantity,
@@ -335,7 +384,7 @@ function toShopProduct(d: ProductRow): ShopProduct {
     description: d.description,
     condition: (d.condition ?? "").trim() || "New",
     image,
-    imageUrl: resolveImageUrl(image),
+    imageUrl,
   };
 }
 
@@ -396,12 +445,14 @@ export function slugify(name: string): string {
   );
 }
 
-export function resolveStoreSlug(businessName?: string, explicit?: string): string {
+export function resolveStoreSlug(businessName?: string, userName?: string, explicit?: string): string {
   const raw = (explicit ?? "").trim();
   if (raw) {
     const clean = slugify(raw);
     if (clean) return clean;
   }
+  const uname = slugify(userName ?? "");
+  if (uname !== "shop") return uname;
   return slugify(businessName ?? "");
 }
 
@@ -409,7 +460,21 @@ export function resolveStoreSlug(businessName?: string, explicit?: string): stri
 export async function storeUrl(scope?: string): Promise<string | null> {
   const business = await loadBusiness(scope).catch(() => null);
   if (!business) return null;
-  return `${appBaseUrl()}/s/${resolveStoreSlug(business.name, business.storeSlug)}`;
+  let userName = "";
+  const owner = scope ? await resolveScopeOwner(scope).catch(() => null) : null;
+  if (owner) {
+    try {
+      await ensureConn();
+      const u = (await OwnerView.findById(owner)
+        .select("name")
+        .lean()
+        .catch(() => null)) as { name?: unknown } | null;
+      if (typeof u?.name === "string") userName = u.name;
+    } catch {
+      /* username is a nicety — the business name still resolves */
+    }
+  }
+  return `${appBaseUrl()}/${resolveStoreSlug(business.name, userName, business.storeSlug)}`;
 }
 
 /** "Africa/Lagos (WAT)" -> "Africa/Lagos" */

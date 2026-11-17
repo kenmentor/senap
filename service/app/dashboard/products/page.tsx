@@ -333,11 +333,11 @@ export default function ProductsPage() {
 
       {/* Add / Edit modal */}
       {modal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4" onClick={() => setModal(null)}>
-          <div className="w-full max-w-[440px] rounded-2xl p-6" style={{ background: "#111b21", border: "1px solid rgba(255,255,255,0.1)" }} onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/70 p-0 sm:items-center sm:p-4" onClick={() => setModal(null)}>
+          <div className="max-h-[92dvh] w-full max-w-[440px] overflow-y-auto rounded-t-3xl p-6 sm:rounded-2xl" style={{ background: "#111b21", border: "1px solid rgba(255,255,255,0.1)", paddingBottom: "calc(1.5rem + env(safe-area-inset-bottom))" }} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <h2 className="text-[16px] font-semibold" style={{ color: "#e9edef" }}>{modal.mode === "add" ? "Add product" : "Edit product"}</h2>
-              <button onClick={() => setModal(null)} aria-label="Close" style={{ color: "#636c73" }}><X size={17} /></button>
+              <button onClick={() => setModal(null)} aria-label="Close" className="flex h-10 w-10 items-center justify-center rounded-full transition active:bg-white/10" style={{ color: "#636c73" }}><X size={17} /></button>
             </div>
             <div className="mt-5 grid gap-3.5">
               <label className="grid gap-1.5">

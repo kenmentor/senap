@@ -24,7 +24,7 @@ export default function StorePage() {
 
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   const liveSlug = savedSlug || "shop";
-  const storeUrl = `${origin}/s/${liveSlug}`;
+  const storeUrl = `${origin}/${liveSlug}`;
   const previewSlug = cleanSlug(draft);
 
   const load = async () => {
@@ -142,7 +142,7 @@ export default function StorePage() {
           style={{ background: "rgba(0,168,132,0.07)", border: "1px dashed rgba(0,168,132,0.45)" }}
         >
           <span className="min-w-0 flex-1 truncate font-mono text-[13.5px]" style={{ color: "#00d19f" }}>
-            {origin ? storeUrl.replace(/^https?:\/\//, "") : `/s/${liveSlug}`}
+            {origin ? storeUrl.replace(/^https?:\/\//, "") : `/${liveSlug}`}
           </span>
           {copied ? <Check size={17} strokeWidth={2.5} style={{ color: "#00d19f" }} /> : <Copy size={16} style={{ color: "#636c73" }} />}
         </button>
@@ -182,7 +182,7 @@ export default function StorePage() {
               </label>
               {draft.trim() && (
                 <p className="mt-1.5 truncate text-[12px]" style={{ color: "#636c73" }}>
-                  Becomes <span className="font-mono" style={{ color: "#00d19f" }}>/s/{previewSlug}</span>
+                  Becomes <span className="font-mono" style={{ color: "#00d19f" }}>/{previewSlug}</span>
                 </p>
               )}
               <div className="mt-2.5 flex gap-2.5">
@@ -197,7 +197,7 @@ export default function StorePage() {
           ) : (
             <button onClick={() => { setDraft(savedSlug); setEditing(true); }} className="flex w-full items-center justify-between gap-2 rounded-xl px-1 py-2 text-left transition active:opacity-80">
               <span className="text-[13px]" style={{ color: "#8a949b" }}>
-                Address: <span className="font-mono font-semibold" style={{ color: "#e9edef" }}>/s/{liveSlug}</span>
+                Address: <span className="font-mono font-semibold" style={{ color: "#e9edef" }}>/{liveSlug}</span>
               </span>
               <span className="flex shrink-0 items-center gap-1.5 text-[12.5px] font-semibold" style={{ color: "#00d19f" }}>
                 <Pencil size={13} /> Change
@@ -223,7 +223,7 @@ export default function StorePage() {
       <div className="mt-2.5 rounded-2xl p-5 sm:mt-3.5 sm:p-6" style={{ border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.025)" }}>
         <div className="flex flex-wrap items-center gap-4">
           <div className="rounded-2xl bg-white p-2.5">
-            <QRCode value={origin ? storeUrl : `/s/${liveSlug}`} size={120} />
+            <QRCode value={origin ? storeUrl : `/${liveSlug}`} size={120} />
           </div>
           <div className="min-w-0 flex-1">
             <h2 className="text-[15px] font-semibold" style={{ color: "#e9edef" }}>Shop banner QR</h2>

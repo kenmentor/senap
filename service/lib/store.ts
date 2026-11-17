@@ -1,7 +1,7 @@
 /**
  * Shared storefront helpers (service side). The agent has a mirrored copy in
  * server-agent (slugify/resolveStoreSlug/storeUrl) — keep the two in sync:
- * same input must always produce the same /s/<slug> URL on both sides.
+ * same input must always produce the same /<username> URL on both sides.
  */
 
 export function slugify(name: string): string {
@@ -27,16 +27,21 @@ export type StoreBusiness = {
   currency: string;
 };
 
-/** The slug the storefront + agent link resolve to (explicit slug wins). */
-export function resolveStoreSlug(settings: { storeSlug?: string; business?: { name?: string } }): string {
+/** The store address: explicit slug wins, then the account username, then business. */
+export function resolveStoreSlug(
+  settings: { storeSlug?: string; business?: { name?: string } },
+  userName?: string,
+): string {
   const raw = (settings.storeSlug ?? "").trim();
   if (raw) return cleanSlug(raw);
+  const uname = slugify(userName ?? "");
+  if (uname !== "shop") return uname;
   return slugify(settings.business?.name ?? "");
 }
 
 /** Public path of the buyer storefront. */
 export function storePath(slug: string): string {
-  return `/s/${slug}`;
+  return `/${slug}`;
 }
 
 /** "NGN ₦" -> "₦", "USD $" -> "$". Falls back to ₦. */

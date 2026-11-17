@@ -224,6 +224,11 @@ export default function LinkPage() {
   const fetchQr = async (id: string) => {
     const res = await fetch(`/api/agent/sessions/${encodeURIComponent(id)}/qr`);
     if (!res.ok) {
+      if (res.status === 401) {
+        stopPolling();
+        router.push("/signin?next=/dashboard/link");
+        throw new Error("Session expired — sign in again.");
+      }
       if (res.status === 404) throw new Error("Session was lost on the agent — press Start again.");
       throw new Error(`QR request failed (${res.status})`);
     }
@@ -262,6 +267,10 @@ export default function LinkPage() {
     try {
       const res = await fetch(`/api/agent/sessions/${encodeURIComponent(id)}/start`, { method: "POST" });
       if (!res.ok) {
+        if (res.status === 401) {
+          router.push("/signin?next=/dashboard/link");
+          return;
+        }
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error ?? `Start failed (${res.status})`);
       }
@@ -301,7 +310,13 @@ export default function LinkPage() {
     pollRef.current = window.setInterval(async () => {
       try {
         const res = await fetch(`/api/agent/sessions/${encodeURIComponent(id)}`);
-        if (!res.ok) return;
+        if (!res.ok) {
+          if (res.status === 401) {
+            stopPolling();
+            router.push("/signin?next=/dashboard/link");
+          }
+          return;
+        }
         const data = await res.json();
         if (data.connected) {
           setPhase("connected");
@@ -356,6 +371,10 @@ export default function LinkPage() {
     try {
       const startRes = await fetch(`/api/agent/sessions/${encodeURIComponent(id)}/start`, { method: "POST" });
       if (!startRes.ok) {
+        if (startRes.status === 401) {
+          router.push("/signin?next=/dashboard/link");
+          return;
+        }
         const body = await startRes.json().catch(() => ({}));
         throw new Error(body.error ?? `Start failed (${startRes.status})`);
       }
@@ -365,7 +384,13 @@ export default function LinkPage() {
         body: JSON.stringify({ phoneNumber: digits }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error ?? `Code request failed (${res.status})`);
+      if (!res.ok) {
+        if (res.status === 401) {
+          router.push("/signin?next=/dashboard/link");
+          return;
+        }
+        throw new Error(data.error ?? `Code request failed (${res.status})`);
+      }
       if (data.connected) {
         setPhase("connected");
       } else {
@@ -403,6 +428,10 @@ export default function LinkPage() {
     try {
       const res = await fetch("/api/accounts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (!res.ok) {
+        if (res.status === 401) {
+          router.push("/signin?next=/dashboard/link");
+          return;
+        }
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error ?? "Could not save the linked account (is MongoDB running?).");
       }

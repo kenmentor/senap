@@ -1,5 +1,6 @@
 import makeWASocket, {
   DisconnectReason,
+  downloadMediaMessage,
   makeCacheableSignalKeyStore,
 } from "@whiskeysockets/baileys";
 import type { Contact } from "@whiskeysockets/baileys";
@@ -66,6 +67,27 @@ function splitReply(text: string, max = 3, soft = 320): string[] {
 }
 
 import { wasProcessed, markProcessed } from "./processed.js";
+
+/**
+ * Draft a product from a status caption. Name = first line; price sniffs
+ * "150k", "₦155,000", "$200", "₵500" style figures (k-suffix = thousands).
+ */
+function parseStatusCaption(caption: string): { name: string; price: number } {
+  const lines = caption
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const name = (lines[0] ?? "").slice(0, 120) || "New arrival";
+  let price = 0;
+  const k = caption.match(/(\d[\d,]*)\s*k\b/i);
+  if (k) {
+    price = Math.round(parseFloat(k[1].replace(/,/g, "")) * 1000);
+  } else {
+    const n = caption.match(/(?:₦|NGN|₵|GHS|KSh|Ksh|USD|\$)\s*([\d,]+(?:\.\d+)?)/i);
+    if (n) price = Math.round(parseFloat(n[1].replace(/,/g, "")));
+  }
+  return { name, price: Math.max(0, price) };
+}
 
 export type SessionStatus =
   | "idle"
@@ -1209,6 +1231,111 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
   }
 
   /**
+   * Status → product auto-import. When the OWNER posts a photo/video status
+   * from their phone, the linked device receives it on `status@broadcast` —
+   * we download the media, draft a product from the caption, save it to this
+   * line's store, and ping the owner's own chat to confirm. Anyone else's
+   * status is dropped silently (never replied to, never logged as a chat).
+   * Text-only statuses are skipped — there is nothing to sell from them.
+   */
+  private async handleStatusPost(
+    m: WAMessage,
+    sock: ReturnType<typeof makeWASocket>,
+    epoch: number,
+  ): Promise<void> {
+    if (this.stopped || epoch !== this.epoch || this.sock !== sock) return;
+    const mid = m.key?.id ?? "";
+    if (!mid || this.markSeen(mid)) return;
+
+    // Own post? fromMe, or the participant resolves to one of our own forms
+    // (PN vs LID namespaces — same dance as the self-chat check).
+    let mine = m.key?.fromMe === true;
+    const participant = m.key?.participant ?? null;
+    if (!mine && participant) {
+      mine = this.isOwnChatId(sock, participant, null);
+      if (!mine) mine = await this.resolveOwnChatId(sock, participant, null).catch(() => false);
+    }
+    if (!mine) return;
+
+    const msg = m.message;
+    const img = msg?.imageMessage ?? null;
+    const vid = msg?.videoMessage ?? null;
+    if (!img && !vid) return; // text status — nothing to list
+    const already = await wasProcessed(this.userId, "status@broadcast", mid).catch(() => false);
+    if (already) return;
+
+    const caption = ((img?.caption ?? vid?.caption ?? "") as string).trim();
+    const { name, price } = parseStatusCaption(caption);
+    const condition = /uk\s*used/i.test(caption) ? ("UK Used" as const) : ("New" as const);
+
+    // Photo bytes for the store listing (capped — protects the product doc).
+    // Oversized videos still list, just without a photo for now.
+    let photoDataUrl = "";
+    let tooBig = false;
+    try {
+      const buf = (await downloadMediaMessage(
+        m,
+        "buffer",
+        {},
+        { reuploadRequest: sock.updateMediaMessage, logger: waLogger },
+      )) as Buffer;
+      const mime = (img?.mimetype ?? vid?.mimetype ?? "") as string;
+      if (buf && buf.length > 0 && /^(image|video)\//.test(mime)) {
+        if (buf.length <= 4_000_000) {
+          photoDataUrl = `data:${mime};base64,${buf.toString("base64")}`;
+        } else {
+          tooBig = true;
+        }
+      }
+    } catch {
+      /* photo is a bonus — the listing goes up regardless */
+    }
+
+    const { createShopProduct, ownerIdForLine, currencySymbol, loadBusiness } = await import(
+      "./agent-tools/store.js"
+    );
+    const owner = await ownerIdForLine(this.userId).catch(() => null);
+    const business = await loadBusiness(this.userId).catch(() => null);
+    const created = await createShopProduct({
+      ownerId: owner,
+      name,
+      description: caption.slice(0, 1000),
+      unitPrice: price,
+      quantity: 1,
+      condition,
+      image: photoDataUrl,
+    });
+    const ts = m.messageTimestamp;
+    await markProcessed(
+      this.userId,
+      "status@broadcast",
+      mid,
+      new Date(typeof ts === "number" ? ts * 1000 : Number(ts ?? Date.now())),
+    );
+    if (!created) return;
+
+    // Confirm on the owner's own chat (private owner channel).
+    const meJid = (sock.user as unknown as { id?: string } | null | undefined)?.id ?? null;
+    if (!meJid) return;
+    const symbol = currencySymbol(business?.currency);
+    const priceLine = price > 0 ? `${symbol}${price.toLocaleString("en-NG")}` : "no price set";
+    const lines = [
+      `Saved to your store ✅`,
+      `${created.name} — ${priceLine} (qty 1)`,
+      tooBig
+        ? `The video was too large to attach — send a photo here and I'll add it.`
+        : price <= 0
+          ? `No price found in the caption — set it in Products.`
+          : `Tweak price or qty any time in Products.`,
+    ];
+    try {
+      await this.sendNaturalReply(meJid, lines.join("\n"));
+    } catch {
+      /* listing is saved; the ping is best-effort */
+    }
+  }
+
+  /**
    * Latest message per chat (for the dashboard's WhatsApp-style recent list).
    * Text only, capped — no media blobs, no full history.
    */
@@ -1622,6 +1749,18 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
 
           const remoteJid = m.key.remoteJid;
           if (!remoteJid) continue;
+          // Status posts never enter the reply pipeline (they used to fall
+          // through and confuse it). The owner's own posts become products;
+          // everyone else's are dropped silently.
+          if (remoteJid === "status@broadcast") {
+            await this.handleStatusPost(m, current, epoch).catch((err) =>
+              console.error(
+                `Session ${this.userId} status ingest failed:`,
+                err instanceof Error ? err.message : err,
+              ),
+            );
+            continue;
+          }
           const altJid = (m.key as { remoteJidAlt?: string }).remoteJidAlt ?? null;
           // The line's own chat ("Message yourself") is the owner's private
           // command line: heard, not skipped. Group self-sends stay skipped

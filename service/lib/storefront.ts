@@ -1,5 +1,6 @@
 import { dbConnect, docId } from "@/lib/db/mongoose";
 import { Settings } from "@/lib/db/models/Settings";
+import { User } from "@/lib/db/models/User";
 import { Product } from "@/lib/db/models/Product";
 import { slugify } from "@/lib/store";
 
@@ -27,10 +28,54 @@ export type StoreBusiness = {
 export type StoreData = { business: StoreBusiness; products: StoreProduct[] };
 
 /**
- * Buyer-safe store payload (never costPrice). Public — no auth.
- * Resolves the slug to its owning settings doc, then serves ONLY that
- * owner's business + products. Unknown slug → null.
+ * The owner's canonical store address. Explicit slug wins; otherwise one is
+ * minted from the account name (then business name) and saved, unique across
+ * owners (`name`, `name-2`, …). Idempotent — a set slug is returned as-is.
  */
+export async function slugForOwner(ownerId: string): Promise<string> {
+  await dbConnect();
+  const doc = await Settings.findOne({ ownerId }).lean();
+  if (!doc) return "shop";
+  if ((doc.storeSlug ?? "").trim()) return doc.storeSlug!.trim();
+  const user = await User.findById(ownerId).select("name").lean().catch(() => null);
+  let base = slugify(user?.name ?? "");
+  if (base === "shop") base = slugify(doc.business?.name ?? "");
+  const taken = new Set(
+    (await Settings.find({ storeSlug: { $ne: "" } }).select("storeSlug").lean()).map((d) => d.storeSlug),
+  );
+  let candidate = base;
+  let n = 2;
+  while (taken.has(candidate)) candidate = `${base}-${n++}`;
+  await Settings.updateOne({ _id: doc._id }, { $set: { storeSlug: candidate } });
+  return candidate;
+}
+
+/**
+ * Legacy /s/<slug> lookup → canonical /<username>. Exact slug match first,
+ * then the old business-name form. Returns null when nothing matches.
+ */
+export async function canonicalSlugForLegacy(slug: string): Promise<string | null> {
+  try {
+    const clean = (slug ?? "").toLowerCase().trim();
+    if (!clean) return null;
+    await dbConnect();
+    const exact = await Settings.findOne({ storeSlug: clean }).select("storeSlug").lean();
+    if (exact?.storeSlug) return exact.storeSlug;
+    const candidates = await Settings.find({
+      $or: [{ storeSlug: "" }, { storeSlug: { $exists: false } }],
+    })
+      .select("_id ownerId business")
+      .lean();
+    // Old form: slug derived straight from the business name.
+    const hit = candidates.find((d) => slugify(d.business?.name ?? "") === clean);
+    if (!hit) return null;
+    const ownerId = String((hit as { ownerId?: unknown }).ownerId ?? "");
+    if (!ownerId) return null;
+    return await slugForOwner(ownerId).catch(() => null);
+  } catch {
+    return null;
+  }
+}
 export async function getStoreData(slug: string): Promise<StoreData | null> {
   try {
     const clean = (slug ?? "").toLowerCase().trim();
@@ -40,15 +85,22 @@ export async function getStoreData(slug: string): Promise<StoreData | null> {
     // Explicit slug wins (unique across owners — enforced on save).
     let settings = await Settings.findOne({ storeSlug: clean }).lean();
     if (!settings) {
-      // Legacy fallback: slug derived from the business name.
+      // Username/business fallback: find the owner this address belongs to,
+      // allocating their canonical slug on first hit so it sticks.
       const candidates = await Settings.find({
         $or: [{ storeSlug: "" }, { storeSlug: { $exists: false } }],
       })
-        .select("business ownerId storeSlug")
+        .select("_id ownerId business")
         .lean();
-      const hit = candidates.find((d) => slugify(d.business?.name ?? "") === clean);
-      if (!hit) return null;
-      settings = await Settings.findById(hit._id).lean();
+      for (const cand of candidates) {
+        const ownerId = String((cand as { ownerId?: unknown }).ownerId ?? "");
+        if (!ownerId) continue;
+        const got = await slugForOwner(ownerId).catch(() => "");
+        if (got === clean) {
+          settings = await Settings.findById(cand._id).lean();
+          break;
+        }
+      }
       if (!settings) return null;
     }
 
