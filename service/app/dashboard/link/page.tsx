@@ -674,17 +674,48 @@ export default function LinkPage() {
     window.setTimeout(() => setCopied(false), 2000);
   };
 
+  /**
+   * Living-server check: poll the session until it is open AND logged in
+   * (me present), or the timeout runs out. Saving happens only on true —
+   * a half-born session is never written to the database.
+   */
+  const waitForHealthySession = async (id: string, timeoutMs: number): Promise<boolean> => {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      try {
+        const res = await fetch(`/api/agent/sessions/${encodeURIComponent(id)}`);
+        if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          if (data.connected === true && typeof data.me === "string" && data.me) return true;
+        } else if (res.status === 401) {
+          router.push("/signin?next=/dashboard/link");
+          return false;
+        }
+      } catch {
+        /* agent unreachable this tick — keep waiting for a living server */
+      }
+      if (Date.now() >= deadline) return false;
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+  };
+
   const confirmLinked = async () => {
     if (confirmBusy) return;
-    const id = userId.trim() || "my-shop";
-    if (relinkTarget === null && accounts.some((a) => engineIdOf(a).toLowerCase() === id.toLowerCase())) {
+    const id = userId.trim() || "my-shop";    if (relinkTarget === null && accounts.some((a) => engineIdOf(a).toLowerCase() === id.toLowerCase())) {
       setActionError(`"${id}" is already linked — pick a different device name.`);
       return;
     }
-    const body = { number: id, name: "Nala Phones", linkedAt: "Today", engineId: id, unlinked: false };
     setActionError(null);
     setConfirmBusy(true);
     try {
+      // Health gate: never save a dead session. The socket must be open AND
+      // logged in (me present) right now — otherwise no record is created
+      // and the user retries instead of collecting a dead line.
+      const ok = await waitForHealthySession(id, 15000);
+      if (!ok) {
+        throw new Error("That session isn't healthy yet — give it a moment, then tap Done again.");
+      }
+      const body = { number: id, name: "Nala Phones", linkedAt: "Today", engineId: id, unlinked: false };
       const res = await fetch("/api/accounts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (!res.ok) {
         if (res.status === 401) {
