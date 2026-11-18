@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { Plus, RefreshCw, Check, MessageCircle, Clock3, Zap, X, ChevronDown, AlertTriangle, BellRing, TrendingUp, QrCode, Package, Store as StoreIcon, Bot } from "lucide-react";
+import { Plus, RefreshCw, Check, MessageCircle, Clock3, Zap, X, ChevronDown, AlertTriangle, BellRing, TrendingUp, QrCode, Package, Store as StoreIcon, Bot, Smartphone } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { lowCount, statusOf, thumbFor, LOW_AT, type Item } from "@/lib/demo/catalog";
 import AgentAccess from "@/components/dashboard/AgentAccess";
@@ -105,6 +105,95 @@ function Block({ children }: { children: React.ReactNode }) {
     <div className="px-4 py-5" style={{ background: "rgba(0,0,0,0.18)", borderRadius: 12 }}>
       {children}
     </div>
+  );
+}
+
+/** Download-the-app nudge — dashboard only (never on the public store).
+ *  Shows after signup until installed or dismissed. Uses the real
+ *  beforeinstallprompt event when the browser offers it, otherwise
+ *  platform instructions. */
+function InstallApp() {
+  const [ready, setReady] = useState(false);
+  const [deferred, setDeferred] = useState<Event | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [help, setHelp] = useState(false);
+  const [isIos, setIsIos] = useState(false);
+
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem("senap-install-dismissed")) return;
+      if (window.matchMedia("(display-mode: standalone)").matches) return;
+      // @ts-expect-error navigator.standalone is iOS-only
+      if (window.navigator.standalone === true) return;
+    } catch {
+      return;
+    }
+    setIsIos(/iphone|ipad|ipod/i.test(window.navigator.userAgent));
+    setReady(true);
+    const onPrompt = (e: Event) => {
+      e.preventDefault();
+      setDeferred(e);
+    };
+    window.addEventListener("beforeinstallprompt", onPrompt);
+    return () => window.removeEventListener("beforeinstallprompt", onPrompt);
+  }, []);
+
+  if (!ready) return null;
+
+  const dismiss = () => {
+    try {
+      window.localStorage.setItem("senap-install-dismissed", "1");
+    } catch {
+      /* private mode — card just hides for this session */
+    }
+    setReady(false);
+  };
+
+  const install = async () => {
+    if (!deferred) {
+      setHelp(true);
+      return;
+    }
+    setBusy(true);
+    try {
+      await ((deferred as unknown as { prompt: () => Promise<void> }).prompt());
+    } catch {
+      /* user cancelled — stay */
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="rounded-3xl px-4 py-4 sm:px-5" style={{ background: "rgba(0,0,0,0.35)", border: "1px solid rgba(0,168,132,0.35)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
+      <div className="flex items-center gap-3 px-1">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl" style={{ background: "#00a884", color: "#04241d" }}>
+          <Smartphone size={20} strokeWidth={2.25} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-[15px] font-bold leading-tight" style={{ color: "#fff" }}>Download the Senap app</span>
+          <span className="block text-[12px]" style={{ color: "#8a949b" }}>Faster than the browser — one tap from your home screen</span>
+        </span>
+        <button onClick={dismiss} aria-label="Dismiss" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition hover:bg-white/10" style={{ color: "#8a949b" }}>
+          <X size={14} />
+        </button>
+      </div>
+      <div className="mt-3">
+        <button
+          onClick={install}
+          disabled={busy}
+          className="flex min-h-[52px] w-full items-center justify-center gap-2 rounded-2xl px-4 text-[14px] font-bold transition active:scale-[0.99] disabled:opacity-50"
+          style={{ background: "#00a884", color: "#04241d" }}
+        >
+          <Smartphone size={18} strokeWidth={2.5} className="shrink-0" /> <span className="truncate">{busy ? "Opening installer…" : "Download app"}</span>
+        </button>
+        {help && !deferred && (
+          <p className="mt-2 px-1 text-center text-[12.5px] leading-relaxed" style={{ color: "#8a949b" }}>
+            {isIos ? "Tap Share → Add to Home Screen to install Senap." : "Open your browser menu → Install Senap (or Add to Home screen)."}
+          </p>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -410,6 +499,9 @@ export default function DashboardHome() {
           <RefreshCw size={16} className={refreshing ? "animate-spin" : ""} />
         </button>
       </div>
+
+      {/* 0 — DOWNLOAD THE APP (signed-in owners only, never on the store) */}
+      <InstallApp />
 
       {/* 0 — FIRST-TIMER JOURNEY: account ✓ → link WhatsApp → setup */}
       {lineCount === 0 && (
