@@ -5,6 +5,12 @@ async function ensureConn(): Promise<void> {
   await ensureMongo();
 }
 
+// Short TTL caches for per-message config reads (persona + business).
+// Shop config changes rarely; 60s staleness is invisible in chat.
+const CONFIG_TTL_MS = 60_000;
+const personaCache = new Map<string, { at: number; value: AssistantPersona | null }>();
+const businessCache = new Map<string, { at: number; value: BusinessInfo | null }>();
+
 // Read-only views over the shop's own collections (same shape as the dashboard).
 
 interface ProductRow {
@@ -389,6 +395,18 @@ function toShopProduct(d: ProductRow): ShopProduct {
 }
 
 export async function loadPersona(userId?: string): Promise<AssistantPersona | null> {
+  // Hot path (every message): shop config changes rarely, so a short TTL
+  // cache turns 1–3 Mongo roundtrips per message into a memory hit.
+  const key = userId?.trim() ?? "";
+  const hit = personaCache.get(key);
+  if (hit && Date.now() - hit.at < CONFIG_TTL_MS) return hit.value;
+  const value = await loadPersonaFresh(userId);
+  if (personaCache.size > 500) personaCache.clear();
+  personaCache.set(key, { at: Date.now(), value });
+  return value;
+}
+
+async function loadPersonaFresh(userId?: string): Promise<AssistantPersona | null> {
   await ensureConn();
   // Per-number assignment: an account-specific persona (key = engine id)
   // wins; the owner's namespaced default is next; the legacy shared "default"
@@ -417,6 +435,17 @@ export async function loadPersona(userId?: string): Promise<AssistantPersona | n
 }
 
 export async function loadBusiness(scope?: string): Promise<BusinessInfo | null> {
+  // Hot path (every message, often 2–3×): same short TTL treatment.
+  const key = scope?.trim() ?? "";
+  const hit = businessCache.get(key);
+  if (hit && Date.now() - hit.at < CONFIG_TTL_MS) return hit.value;
+  const value = await loadBusinessFresh(scope);
+  if (businessCache.size > 500) businessCache.clear();
+  businessCache.set(key, { at: Date.now(), value });
+  return value;
+}
+
+async function loadBusinessFresh(scope?: string): Promise<BusinessInfo | null> {
   await ensureConn();
   const owner = scope ? await resolveScopeOwner(scope).catch(() => null) : null;
   let doc = null;

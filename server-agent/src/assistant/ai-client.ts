@@ -118,7 +118,7 @@ export default class AiClient {
   async chat(
     messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
     tools: OpenAI.Chat.Completions.ChatCompletionTool[] = [],
-    opts?: { timeoutMs?: number; maxTokens?: number },
+    opts?: { timeoutMs?: number; maxTokens?: number; reasoningEffort?: "low" | "medium" | "high" },
   ) {
     // Bound context/cost: cap message count + per-message chars (no unbounded
     // captions/tool outputs blowing up RAM or the model bill).
@@ -154,7 +154,10 @@ export default class AiClient {
             messages: slim,
             max_tokens: opts?.maxTokens ?? 1200,
             ...(tools?.length && { tools, tool_choice: "auto" }),
-          }) as Promise<{
+            // Reasoning models (gpt-oss) spend most of their time thinking;
+            // micro-calls (probes, classifiers, holding lines) get "low".
+            ...(opts?.reasoningEffort ? { reasoning_effort: opts.reasoningEffort } : {}),
+          } as Parameters<OpenAI["chat"]["completions"]["create"]>[0]) as Promise<{
             choices: { message: { content: string | null; tool_calls?: ToolCallWire[] }; finish_reason: string }[];
             usage?: unknown;
           }>,

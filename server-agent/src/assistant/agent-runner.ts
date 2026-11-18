@@ -168,47 +168,6 @@ export interface IntentProbeResult {
   reason: string;
 }
 
-/** Generic fallbacks when the contextual draft itself fails — still professional. */
-const HOLDING_FALLBACKS = [
-  "On it — please give me a moment.",
-  "Please hold on a moment.",
-];
-
-/**
- * Draft a CONTEXTUAL holding line for a slow answer: one short professional
- * bubble that acknowledges what THIS customer actually asked for ("set a
- * timer" -> setting it, "how much is 15 Pro" -> checking the price), so it
- * reads as a human mid-thought rather than a generic stall. Cheap (~60
- * tokens, 6s cap) and only used when the real answer is already running late.
- * Falls back to a short generic line when the draft itself fails.
- */
-export async function draftHoldingLine(incomingText: string): Promise<string> {
-  const firstLine = (incomingText ?? "").split("\n")[0].slice(0, 300).trim();
-  if (firstLine) {
-    const system =
-      "You are a professional WhatsApp shop assistant. The customer is waiting while you handle their request. " +
-      "Write ONE short holding reply (max 15 words) that acknowledges their SPECIFIC request in your own professional words — " +
-      "a price question means you are confirming the price, a reminder/timer means you are setting it, a complaint means you are looking into it. " +
-      "Never narrate backend systems. Banned words: search, searching, database, stock, tools, AI, model, system. " +
-      "Plain text only: no emoji, no greeting, no quotes, no hashtags.";
-    try {
-      const res = await client.chat(
-        [
-          { role: "system", content: system },
-          { role: "user", content: firstLine },
-        ],
-        [],
-        { timeoutMs: 6000, maxTokens: 40 },
-      );
-      const line = cleanReply((res.content ?? "").trim()).split("\n")[0].trim();
-      if (line && line.length <= 160) return line;
-    } catch {
-      /* fall through to a generic line */
-    }
-  }
-  return HOLDING_FALLBACKS[Math.floor(Math.random() * HOLDING_FALLBACKS.length)];
-}
-
 export interface StatusVerdict {
   isProduct: boolean;
   name: string;
@@ -237,14 +196,14 @@ export async function classifyStatusPost(caption: string, kind: "photo" | "video
     '{"isProduct":true|false,"name":"short product name or empty","price":number or 0,"condition":"New"|"UK Used"|"Used","reason":"few words"}. ' +
     "Price: plain number in shop currency (150k means 150000). Condition defaults to New unless the caption says UK used/second-hand.";
   try {
-    const res = await client.chat(
-      [
-        { role: "system", content: system },
-        { role: "user", content: text },
-      ],
-      [],
-      { timeoutMs: 10000, maxTokens: 120 },
-    );
+      const res = await client.chat(
+        [
+          { role: "system", content: system },
+          { role: "user", content: text },
+        ],
+        [],
+        { timeoutMs: 10000, maxTokens: 120, reasoningEffort: "low" },
+      );
     const line = (res.content ?? "").trim().replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
     const parsed = JSON.parse(line) as Partial<StatusVerdict>;
     if (typeof parsed.isProduct !== "boolean") return null;
@@ -282,11 +241,11 @@ export async function probeGroupIntent(input: IntentProbeInput): Promise<IntentP
     "or anything already answered. " +
     "Answer with exactly one line: YES <confidence 0-1> or NO <confidence 0-1>.";
   try {
-    const res = await client.chat(
-      [{ role: "system", content: system }, { role: "user", content: `${context}Now: [${input.sender}] ${input.text.slice(0, 500)}` }],
-      [],
-      { timeoutMs: 12_000, maxTokens: 40 },
-    );
+      const res = await client.chat(
+        [{ role: "system", content: system }, { role: "user", content: `${context}Now: [${input.sender}] ${input.text.slice(0, 500)}` }],
+        [],
+        { timeoutMs: 12_000, maxTokens: 40, reasoningEffort: "low" },
+      );
     const line = (res.content ?? "").trim().split("\n")[0];
     const m = line.match(/^(yes|no)\s+([01](?:\.\d{1,2})?)/i);
     if (!m) return null;
@@ -352,24 +311,30 @@ export async function handleCustomerMessage(
     messageLog: req.messageLog,
   };
 
-  // Deliver any overdue reminders before answering.
-  try {
-    const due = await takeDueReminders(req.userId, req.customerJid);
-    for (const r of due) {
-      const text = `Reminder: ${r.text}`;
-      await req.sendText(req.customerJid, text);
+  // Overdue reminders + system prompt in PARALLEL (independent reads —
+  // sequential awaits used to stack full roundtrips before the model ran).
+  const [dueResult, systemResult] = await Promise.allSettled([
+    takeDueReminders(req.userId, req.customerJid),
+    buildSystemPrompt(req.userId),
+  ]);
+  if (dueResult.status === "fulfilled") {
+    for (const r of dueResult.value) {
+      try {
+        await req.sendText(req.customerJid, `Reminder: ${r.text}`);
+      } catch (e) {
+        console.error("Reminder delivery failed:", e);
+      }
     }
-  } catch (e) {
-    console.error("Reminder delivery failed:", e);
+  } else {
+    console.error("Reminder delivery failed:", dueResult.reason);
   }
-
-  let system: string;
-  try {
-    system = await buildSystemPrompt(req.userId);
-  } catch (e) {
-    console.error("System prompt load failed:", e);
-    system = "You are a helpful WhatsApp shop assistant. Keep replies short.";
-  }
+  const system =
+    systemResult.status === "fulfilled"
+      ? systemResult.value
+      : (() => {
+          console.error("System prompt load failed:", systemResult.reason);
+          return "You are a helpful WhatsApp shop assistant. Keep replies short.";
+        })();
 
   const messages: ChatMessage[] = [
     { role: "system", content: system },

@@ -67,6 +67,25 @@ function splitReply(text: string, max = 3, soft = 320): string[] {
   return out.length > 0 ? out : [text.trim()];
 }
 
+/**
+ * Instant small-talk buckets: pure greeting / thanks / goodbye in ≤30
+ * chars. Answered with zero model call (the full agent loop costs 8s+ and
+ * would fire a holding line even for "hi"). 1:1 customer chats only —
+ * owners need the model, groups need the reply gate.
+ */
+function smallTalkBucket(text: string): "greet" | "thanks" | "bye" | null {
+  const t = (text ?? "").trim();
+  if (!t || t.length > 30) return null;
+  const low = t
+    .toLowerCase()
+    .replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, "")
+    .trim();
+  if (/^(hi|hello|hey|how ?far|howfa|yo|sup|morning|afternoon|evening|good ?(morning|afternoon|evening|day))$/.test(low)) return "greet";
+  if (/^(thanks|thank ?you|thx|tnx|appreciated|god bless( you)?)$/.test(low)) return "thanks";
+  if (/^(bye|good ?bye|good ?night|see you( later)?|later|ok bye)$/.test(low)) return "bye";
+  return null;
+}
+
 import { wasProcessed, markProcessed } from "./processed.js";
 
 /**
@@ -1207,45 +1226,6 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
     return isSelfJid(participantId, selfId);
   }
 
-  /** Last holding line per chat, so slow replies never repeat themselves. */
-  private lastHoldingLine = new Map<string, string>();
-
-  /**
-   * When the answer is taking a while (tool calls, slow model), act like a
-   * human who was seen reading: blue ticks + ONE short contextual bubble
-   * drafted from the customer's actual message (see draftHoldingLine), then
-   * the real answer lands on top like a follow-up message. 1:1 chats only —
-   * groups stay quiet unless the reply gate already decided to answer.
-   */
-  private async sendHoldingLine(
-    remoteJid: string,
-    opts: { isOwner: boolean; keyId?: string | null; participant?: string | null; text: string },
-  ): Promise<string | null> {
-    const sock = this.liveSock();
-    if (!sock || !opts.keyId) return null;
-    const { draftHoldingLine } = await import("../assistant/agent-runner.js");
-    let line = await draftHoldingLine(opts.text).catch(() => null);
-    if (!line) return null;
-    if (this.lastHoldingLine.get(remoteJid) === line) {
-      line = "Please give me one more moment.";
-    }
-    this.lastHoldingLine.set(remoteJid, line);
-    if (opts.isOwner && !remoteJid.endsWith("@g.us")) line = `[agent] ${line}`;
-    try {
-      await sock.readMessages([
-        { remoteJid, id: opts.keyId, fromMe: false, participant: opts.participant ?? null },
-      ]);
-    } catch {
-      /* receipts are cosmetic — never block the holding line */
-    }
-    await this.sendNaturalReply(
-      remoteJid,
-      line,
-      { id: opts.keyId, participant: opts.participant ?? null, text: opts.text },
-    );
-    return line;
-  }
-
   /** All known own forms (PN + LID + phoneNumber) for participant matching. */
   private ownForms(): string[] {
     const me = this.sock?.user as unknown as { id?: string; lid?: string; phoneNumber?: string } | null | undefined;
@@ -2309,6 +2289,59 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
       return;
     }
 
+    // Small-talk fast path: greetings / thanks / goodbyes in a 1:1 customer
+    // chat answer instantly with no model call at all. (Owner chats and
+    // groups fall through to the full loop — owners need command handling,
+    // groups need the reply gate.)
+    if (kind === "text") {
+      const bucket = smallTalkBucket(text);
+      if (bucket && !remoteJid.endsWith("@g.us")) {
+        let ownerHere = selfChat;
+        if (!ownerHere) {
+          try {
+            const { isOwnerJid, loadBusiness } = await import("./agent-tools/store.js");
+            const b = await loadBusiness(this.userId).catch(() => null);
+            ownerHere =
+              isOwnerJid(remoteJid, b?.phone) ||
+              (b?.adminVerified === true && !!b?.adminPhone ? isOwnerJid(remoteJid, b.adminPhone) : false);
+          } catch {
+            /* treat as customer — fast path stays safe */
+          }
+        }
+        if (!ownerHere) {
+          let quick: string;
+          if (bucket === "greet") {
+            const { loadPersona } = await import("./agent-tools/store.js");
+            quick =
+              (await loadPersona(this.userId).catch(() => null))?.greeting?.trim() ||
+              "Hello! How can I help you today?";
+          } else if (bucket === "thanks") {
+            quick = "You're welcome! Anything else I can help with? \u{1F60A}";
+          } else {
+            quick = "Bye for now! I'm here whenever you need anything. \u{1F44B}";
+          }
+          try {
+            this.touch(remoteJid);
+            if (!alreadyLogged && rawForLog) this.logIncoming(remoteJid, rawForLog, text, kind);
+            this.rememberContact(remoteJid, pushName ?? undefined);
+            const quickHistory = this.historyFor(remoteJid);
+            quickHistory.append("user", text);
+            try {
+              await sock.readMessages([{ ...key, fromMe: false }]);
+            } catch {
+              /* receipts are cosmetic */
+            }
+            await this.sendNaturalReply(remoteJid, quick);
+            quickHistory.append("assistant", quick);
+            await markProcessed(this.userId, remoteJid, mid, new Date(sentAt));
+          } catch (error) {
+            console.error("Message processing failed:", error);
+          }
+          return;
+        }
+      }
+    }
+
     const incomingText = (kind === "text" ? text : `${text}\n[Sent with a ${kind} — you cannot view media, reply to the caption and never claim to see the photo.]`).slice(
       0,
       WhatsappSession.MAX_INCOMING,
@@ -2379,33 +2412,21 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
         if (log.length > 0) this.backdropTs.set(remoteJid, log[log.length - 1].ts);
       }
       history.append("user", displayText);
-      // Voice cloning: observe this line and mirror the customer's own style
-      // (1:1 customers only — groups follow the group persona, the owner gets
-      // direct [agent] efficiency). Cold profiles return null = house voice.
-      let style: string | null = null;
-      if (!isGroupChat && !isOwnerEarly) {
-        try {
-          const { styleDirectiveFor } = await import("./style-profile.js");
-          style = await styleDirectiveFor(
-            this.userId,
-            remoteJid,
-            text,
-            history.all().length > 1,
-          ).catch(() => null);
-        } catch {
-          /* default voice on any failure */
-        }
-      }
-      // Saved manner notes: standing instructions for this chat + line
-      // (owner-taught rules and per-person preferences). Null = none yet.
-      // Groups and owner chats get them too — a group can have its own rules.
-      let promptNotes: string | null = null;
-      try {
-        const { getPromptNotesBlock } = await import("./agent-tools/prompt-note-tools.js");
-        promptNotes = await getPromptNotesBlock(this.userId, remoteJid).catch(() => null);
-      } catch {
-        /* proceed without notes */
-      }
+      // Voice cloning + saved manner notes in PARALLEL (two independent
+      // reads — sequential awaits used to cost a full roundtrip each).
+      // Voice mirror: 1:1 customers only; groups follow the group persona,
+      // the owner gets direct [agent] efficiency. Cold profiles return null.
+      const historyLen = history.all().length;
+      const [style, promptNotes] = await Promise.all([
+        !isGroupChat && !isOwnerEarly
+          ? import("./style-profile.js")
+              .then((m) => m.styleDirectiveFor(this.userId, remoteJid, text, historyLen > 1))
+              .catch(() => null)
+          : Promise.resolve(null),
+        import("./agent-tools/prompt-note-tools.js")
+          .then((m) => m.getPromptNotesBlock(this.userId, remoteJid))
+          .catch(() => null),
+      ]);
       this.rememberContact(remoteJid, pushName ?? undefined);
       if (!alreadyLogged && rawForLog) this.logIncoming(remoteJid, rawForLog, displayText, kind);
       // All socket writes go through the session-wide serializer: one account,
@@ -2523,32 +2544,11 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
       // Never go silent: if the agent run itself throws (model down, tool
       // loop blew up), the customer still gets an honest fallback and the
       // message is ledgered — a task may stumble, it never just dies.
+      // NOTE: no holding bubble, ever — the reply lands when it is ready
+      // (WhatsApp shows typing meanwhile). Stalling one-liners are banned.
       let reply: string;
       try {
-        reply = await (async () => {
-        // Slow answer? Act human while the tools work: after 8s with no
-        // reply yet, blue-tick + ONE short holding bubble (1:1 only), then
-        // the real answer lands on top like a follow-up message.
-        let settled = false;
-        let holdingTimer: ReturnType<typeof setTimeout> | null = null;
-        if (!isGroupChat && key?.id) {
-          holdingTimer = setTimeout(() => {
-            if (settled) return;
-            void this
-              .sendHoldingLine(remoteJid, {
-                isOwner,
-                keyId: key.id ?? null,
-                participant: key.participant ?? null,
-                text,
-              })
-              .then((said) => {
-                if (said) history.append("assistant", said);
-              })
-              .catch(() => {});
-          }, 8000);
-        }
-      try {
-        return await handleCustomerMessage({
+        reply = await handleCustomerMessage({
           userId: this.userId,
           customerJid: remoteJid,
           incomingText: displayText,
@@ -2561,11 +2561,6 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
           style,
           promptNotes,
         });
-        } finally {
-          settled = true;
-          if (holdingTimer) clearTimeout(holdingTimer);
-        }
-        })();
       } catch (error) {
         // Model outage (dead token, quota exhausted, timeout): stay SILENT
         // toward the customer — no fallback bubble, no receipts, nothing that
