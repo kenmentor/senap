@@ -122,20 +122,39 @@ function InstallApp() {
   useEffect(() => {
     try {
       if (window.localStorage.getItem("senap-install-dismissed")) return;
-      if (window.matchMedia("(display-mode: standalone)").matches) return;
+      if (window.localStorage.getItem("senap-installed")) return;
+      if (window.matchMedia("(display-mode: standalone)").matches) {
+        window.localStorage.setItem("senap-installed", "1");
+        return;
+      }
       // @ts-expect-error navigator.standalone is iOS-only
-      if (window.navigator.standalone === true) return;
+      if (window.navigator.standalone === true) {
+        window.localStorage.setItem("senap-installed", "1");
+        return;
+      }
     } catch {
       return;
     }
     setIsIos(/iphone|ipad|ipod/i.test(window.navigator.userAgent));
     setReady(true);
+    const markInstalled = () => {
+      try {
+        window.localStorage.setItem("senap-installed", "1");
+      } catch {
+        /* private mode — hides until reload */
+      }
+      setReady(false);
+    };
     const onPrompt = (e: Event) => {
       e.preventDefault();
       setDeferred(e);
     };
     window.addEventListener("beforeinstallprompt", onPrompt);
-    return () => window.removeEventListener("beforeinstallprompt", onPrompt);
+    window.addEventListener("appinstalled", markInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onPrompt);
+      window.removeEventListener("appinstalled", markInstalled);
+    };
   }, []);
 
   if (!ready) return null;
@@ -157,6 +176,14 @@ function InstallApp() {
     setBusy(true);
     try {
       await ((deferred as unknown as { prompt: () => Promise<void> }).prompt());
+      // Accepted installs fire `appinstalled` (which persists + hides);
+      // this covers browsers that don't.
+      try {
+        window.localStorage.setItem("senap-installed", "1");
+      } catch {
+        /* ignore */
+      }
+      setReady(false);
     } catch {
       /* user cancelled — stay */
     } finally {

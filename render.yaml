@@ -78,5 +78,15 @@ services:
           property: host
       - key: AGENT_API_KEY
         sync: false # must match agent's AGENT_API_KEY exactly
+      - key: NEXT_PUBLIC_FIREBASE_API_KEY
+        sync: false # Firebase console → Project settings → Web app
+      - key: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+        sync: false # e.g. senap-xxxxx.firebaseapp.com
+      - key: NEXT_PUBLIC_FIREBASE_PROJECT_ID
+        sync: false
+      - key: NEXT_PUBLIC_FIREBASE_APP_ID
+        sync: false
+      - key: FIREBASE_SERVICE_ACCOUNT
+        sync: false # full service-account JSON on one line (server only)
       - key: COST_QUOTA
         value: "1000"

@@ -1,15 +1,14 @@
 import { NextResponse } from "next/server";
-import { dbConnect } from "@/lib/db/mongoose";
+import { dbConnect, docId } from "@/lib/db/mongoose";
 import { User } from "@/lib/db/models/User";
 import { signSession, sessionCookie } from "@/lib/auth";
 import { settleWorkspace } from "@/lib/claims";
+import { verifyFirebaseToken } from "@/lib/firebase-admin";
 
 /**
- * Passwordless email entry (no verification codes — launch-speed auth).
- * The client shows an explicit "is this really your email?" confirm screen
- * before calling this, so typos and casual impersonation need a deliberate
- * second tap. Anyone who knows an address CAN enter that account — email OTP
- * is the planned upgrade when abuse shows up.
+ * Firebase email-link exchange: the client proves the inbox with a Firebase
+ * ID token, we mint our own 30-day session cookie (same shape as before, so
+ * middleware + sessionUser() + every scoped API keep working unchanged).
  */
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -24,8 +23,6 @@ function nameFromEmail(email: string): string {
   return words.join(" ").slice(0, 40) || "Business owner";
 }
 
-/* ---- tiny in-memory rate limiter (per Render instance; good enough to blunt
-   credential-stuffing-style email spraying at launch) ---- */
 const hits = new Map<string, number[]>();
 function underLimit(key: string, limit: number, windowMs: number): boolean {
   const now = Date.now();
@@ -37,7 +34,6 @@ function underLimit(key: string, limit: number, windowMs: number): boolean {
   recent.push(now);
   hits.set(key, recent);
   if (hits.size > 5000) {
-    // Cheap prune: drop the oldest quarter of keys.
     const keys = Array.from(hits.keys()).slice(0, 1250);
     for (const k of keys) hits.delete(k);
   }
@@ -55,18 +51,21 @@ export async function POST(req: Request) {
   }
 
   const body = await req.json().catch(() => ({}));
-  const email = String(body.email ?? "").toLowerCase().trim();
-  if (email.length > 254 || !EMAIL_RE.test(email)) {
+  const idToken = String(body.idToken ?? "");
+  if (!idToken) {
+    return NextResponse.json({ error: "Sign-in token missing — try again." }, { status: 400 });
+  }
+
+  const verified = await verifyFirebaseToken(idToken);
+  if (!verified) {
     return NextResponse.json(
-      { error: "That doesn't look like an email address." },
-      { status: 400 },
+      { error: "Couldn't verify that sign-in — request a fresh link." },
+      { status: 401 },
     );
   }
-  if (!underLimit(`email:${email}`, 10, 60 * 60_000)) {
-    return NextResponse.json(
-      { error: "Too many tries for this email — wait an hour and retry." },
-      { status: 429 },
-    );
+  const email = verified.email;
+  if (email.length > 254 || !EMAIL_RE.test(email)) {
+    return NextResponse.json({ error: "That email address looks invalid." }, { status: 400 });
   }
 
   try {
@@ -77,7 +76,6 @@ export async function POST(req: Request) {
       user = await User.create({ name: nameFromEmail(email), email });
       isNew = true;
     }
-    // First real email adopts the pre-launch workspace; later emails start empty.
     await settleWorkspace(String(user._id), email);
     const res = NextResponse.json({
       ok: true,
