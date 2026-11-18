@@ -15,7 +15,9 @@
     "start": "node dist/src/server.js",
     "typecheck": "tsc --noEmit",
     "test": "tsc --noEmit",
-    "test:cloudflare": "tsx src/scripts/test-cloudflare.ts"
+    "test:cloudflare": "tsx src/scripts/test-cloudflare.ts",
+    "test:groq": "tsx src/scripts/test-groq.ts",
+    "test:status": "tsx src/scripts/test-status-pipeline.ts"
   },
   "dependencies": {
     "@hapi/boom": "^10.0.1",

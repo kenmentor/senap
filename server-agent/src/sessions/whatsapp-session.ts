@@ -78,8 +78,9 @@ const SELL_WORDS = /(price|stock|available|sizes?|colou?rs?|\bdm\b|order|buy|sel
 /**
  * Draft a product from a status caption. Name = first line; price sniffs
  * "150k", "₦155,000", "$200", "₵500" style figures (k-suffix = thousands).
+ * Exported for the offline status-pipeline unit test.
  */
-function parseStatusCaption(caption: string): { name: string; price: number } {
+export function parseStatusCaption(caption: string): { name: string; price: number } {
   const lines = caption
     .split("\n")
     .map((l) => l.trim())
@@ -94,6 +95,16 @@ function parseStatusCaption(caption: string): { name: string; price: number } {
     if (n) price = Math.round(parseFloat(n[1].replace(/,/g, "")));
   }
   return { name, price: Math.max(0, price) };
+}
+
+/**
+ * Offline legitimacy decision — the exact check handleStatusPost uses when
+ * the model classifier is unreachable. Price figure or selling words =
+ * product; anything else = skip. Exported for the unit test.
+ */
+export function statusCaptionLooksSellish(caption: string): boolean {
+  const parsed = parseStatusCaption(caption);
+  return parsed.price > 0 || SELL_WORDS.test(caption);
 }
 
 export type SessionStatus =
@@ -1416,7 +1427,7 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
     } else {
       // Classifier down — keyword fallback: price figure or selling words.
       const parsed = parseStatusCaption(caption);
-      const looksSellish = parsed.price > 0 || SELL_WORDS.test(caption);
+      const looksSellish = statusCaptionLooksSellish(caption);
       if (!looksSellish) {
         await this.noteStatusSkip(sock, mid, m, `Noted — skipped (couldn't confirm it's a product). Add a name + price in the caption to list it.`);
         return;

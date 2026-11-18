@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { Search, X, Package, MessageCircle, ChevronLeft, MapPin, Phone } from "lucide-react";
+import { Search, X, Package, MessageCircle, ChevronLeft, MapPin } from "lucide-react";
 import type { Product } from "@/lib/demo/products";
 import { VIEWS, lowCount, statusOf, thumbFor, LOW_AT, type Item } from "@/lib/demo/catalog";
 import { formatPrice, orderLink, waDigits } from "@/lib/store";
@@ -96,34 +96,33 @@ export default function StoreGrid({
       </div>
 
       <div className="relative z-10 mx-auto w-full max-w-[1200px] px-4 pt-6 sm:px-6">
-        {/* Shop header */}
-        <div className="flex items-center gap-3.5">
-          <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl text-[20px] font-extrabold" style={{ background: "#00a884", color: "#04241d" }}>
-            {initialsOf(business.name)}
-          </span>
-          <div className="min-w-0 flex-1">
-            <h1 className="font-display truncate text-[22px] font-bold leading-tight" style={{ color: "#e9edef" }}>{business.name}</h1>
-            <p className="mt-0.5 flex items-center gap-1 truncate text-[12px]" style={{ color: "#8a949b" }}>
-              <MapPin size={12} className="shrink-0" /> {business.address || "Online store"}
-            </p>
-            {business.phone ? (
-              <p className="mt-0.5 flex items-center gap-1 truncate text-[12px]" style={{ color: "#8a949b" }}>
-                <Phone size={12} className="shrink-0" /> {business.phone}
-              </p>
+        {/* Shop banner — minimal: mark + name, nothing else */}
+        <div className="overflow-hidden rounded-3xl" style={{ border: "1px solid rgba(255,255,255,0.08)" }}>
+          <div className="flex items-center gap-3.5 px-4 py-4 sm:px-5" style={{ background: "linear-gradient(135deg, rgba(0,168,132,0.22), rgba(0,168,132,0.04) 55%, rgba(255,255,255,0.02))" }}>
+            <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl text-[20px] font-extrabold" style={{ background: "#00a884", color: "#04241d" }}>
+              {initialsOf(business.name)}
+            </span>
+            <div className="min-w-0 flex-1">
+              <h1 className="font-display truncate text-[22px] font-bold leading-tight" style={{ color: "#e9edef" }}>{business.name}</h1>
+              {business.address ? (
+                <p className="mt-0.5 flex items-center gap-1 truncate text-[12px]" style={{ color: "#8a949b" }}>
+                  <MapPin size={12} className="shrink-0" /> {business.address}
+                </p>
+              ) : null}
+            </div>
+            {chatHref ? (
+              <a
+                href={chatHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={`Chat with ${business.name} on WhatsApp`}
+                className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full transition active:scale-95"
+                style={{ background: "#00a884", color: "#04241d" }}
+              >
+                <MessageCircle size={22} strokeWidth={2} />
+              </a>
             ) : null}
           </div>
-          {chatHref ? (
-            <a
-              href={chatHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label={`Chat with ${business.name} on WhatsApp`}
-              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full transition active:scale-95"
-              style={{ background: "#00a884", color: "#04241d" }}
-            >
-              <MessageCircle size={22} strokeWidth={2} />
-            </a>
-          ) : null}
         </div>
 
         {/* Search */}
@@ -133,7 +132,7 @@ export default function StoreGrid({
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder={`Search ${business.name}…`}
+              placeholder="Search products…"
               className="w-full bg-transparent text-[13.5px] outline-none placeholder:text-[#636c73]"
               style={{ color: "#e9edef" }}
             />
@@ -145,12 +144,8 @@ export default function StoreGrid({
           </div>
         </div>
 
-        <p className="mt-5 text-[12.5px]" style={{ color: "#636c73" }}>
-          {filtered.length} product{filtered.length === 1 ? "" : "s"}{query ? ` · “${query}”` : ""}
-        </p>
-
         {/* Filters: category pills + condition */}
-        <div className="mt-3 flex flex-wrap items-center gap-2">
+        <div className="mt-5 flex flex-wrap items-center gap-2">
           {categories.map((c) => (
             <button
               key={c}
