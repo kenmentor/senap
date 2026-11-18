@@ -162,6 +162,96 @@ function Steps({ items }: { items: string[] }) {
   );
 }
 
+/** Phones can't scan their own screen — default those to the code flow. */
+function isMobileDevice(): boolean {
+  try {
+    const ua = window.navigator.userAgent || "";
+    if (/android|iphone|ipad|ipod|mobile/i.test(ua)) return true;
+    return window.matchMedia("(pointer: coarse)").matches && Math.min(window.innerWidth, window.innerHeight) < 500;
+  } catch {
+    return false;
+  }
+}
+
+/** Mini WhatsApp screen mock — one tap of the 2026 code-link flow. */
+function MockScreen({ title, caption, children }: { title: string; caption: string; children: React.ReactNode }) {
+  return (
+    <figure className="w-[168px] shrink-0 snap-center">
+      <div className="overflow-hidden rounded-2xl" style={{ background: "#111b21", border: "1px solid rgba(255,255,255,0.12)" }}>
+        <div className="px-2.5 py-2 text-center text-[10px] font-bold" style={{ background: "#1f2c34", color: "#e9edef" }}>
+          {title}
+        </div>
+        <div className="flex min-h-[168px] flex-col justify-center gap-1.5 p-2">
+          {children}
+        </div>
+      </div>
+      <figcaption className="mt-1.5 px-0.5 text-center text-[11px] leading-snug" style={{ color: "#8a949b" }}>
+        {caption}
+      </figcaption>
+    </figure>
+  );
+}
+
+function MockRow({ label, active, dim }: { label: string; active?: boolean; dim?: boolean }) {
+  return (
+    <div
+      className="rounded-lg px-2 py-1.5 text-[10.5px] font-medium"
+      style={
+        active
+          ? { background: "rgba(0,168,132,0.18)", border: "1px solid rgba(0,168,132,0.55)", color: "#fff" }
+          : { background: "rgba(255,255,255,0.04)", border: "1px solid transparent", color: dim ? "#4a545b" : "#aebac1" }
+      }
+    >
+      {label}
+    </div>
+  );
+}
+
+/** Visual walkthrough of the code flow — most people have never done it. */
+function CodeVisualGuide() {
+  const digits = ["A", "B", "C", "D", "–", "1", "2", "3", "4"];
+  return (
+    <div className="mt-4 w-full">
+      <p className="px-1 text-[12px] font-semibold" style={{ color: "#aebac1" }}>
+        Where to tap in WhatsApp <span style={{ color: "#636c73" }}>— swipe through</span>
+      </p>
+      <div className="mt-2 flex snap-x snap-mandatory gap-2.5 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
+        <MockScreen title="⋯  Settings" caption="1 · Open WhatsApp → Settings (⋯ on Android)">
+          <MockRow label="👤 Adaeze Eze" dim />
+          <MockRow label="🔗 Linked devices" active />
+          <MockRow label="🔔 Notifications" dim />
+        </MockScreen>
+        <MockScreen title="Linked devices" caption="2 · Your devices + the green button">
+          <MockRow label="📱 This phone" dim />
+          <MockRow label="＋  Link a device" active />
+        </MockScreen>
+        <MockScreen title="Link a device" caption="3 · Pick the code option, not the camera">
+          <MockRow label="📷 Scan QR code" dim />
+          <MockRow label="🔢 Link with phone number instead" active />
+        </MockScreen>
+        <MockScreen title="Enter code" caption="4 · Type the 8-character code from above">
+          <div className="grid grid-cols-5 gap-1">
+            {digits.map((d, i) => (
+              <span
+                key={i}
+                className="flex h-7 items-center justify-center rounded-md font-mono text-[11px] font-bold"
+                style={
+                  d === "–"
+                    ? { color: "#636c73" }
+                    : { background: "rgba(0,168,132,0.14)", border: "1px solid rgba(0,168,132,0.5)", color: "#00d19f" }
+                }
+              >
+                {d}
+              </span>
+            ))}
+          </div>
+          <p className="text-center text-[9.5px]" style={{ color: "#636c73" }}>Codes expire fast — request a new one if rejected</p>
+        </MockScreen>
+      </div>
+    </div>
+  );
+}
+
 export default function LinkPage() {
   const router = useRouter();
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -227,7 +317,8 @@ export default function LinkPage() {
     setPhase("idle");
     setQr(null);
     setError(null);
-    setLinkMode("qr");
+    // Phones can't scan their own screen — they land straight on the code flow.
+    setLinkMode(isMobileDevice() ? "code" : "qr");
     setPhone("");
     setPairCode(null);
     setPairError(null);
@@ -710,7 +801,7 @@ export default function LinkPage() {
     setPhase("idle");
     setQr(null);
     setError(null);
-    setLinkMode("qr");
+    setLinkMode(isMobileDevice() ? "code" : "qr");
     setPhone("");
     setPairCode(null);
     setPairError(null);
@@ -916,6 +1007,7 @@ export default function LinkPage() {
                   {actionError && <p className="mt-2.5 text-center text-[12px]" style={{ color: "#e66a6a" }}>{actionError}</p>}
                   {pairCode && !pairError && <p className="mt-2.5 text-[11.5px]" style={{ color: "#636c73" }}>Type it into WhatsApp now — codes expire fast, request a new one if rejected</p>}
 
+                  <CodeVisualGuide />
                   <Steps items={CODE_STEPS} />
                 </>
               ) : (
