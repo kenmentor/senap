@@ -60,6 +60,16 @@ export function waDigits(phone: string | undefined): string {
   return (phone ?? "").replace(/\D/g, "");
 }
 
+/** True for video media: data:video blobs, .mp4/.webm/.mov, Cloudinary video paths. */
+export function isVideoUrl(url: string | undefined): boolean {
+  const u = (url ?? "").trim();
+  if (!u) return false;
+  if (/^data:video\//i.test(u)) return true;
+  const path = u.split("?")[0].toLowerCase();
+  if (/\.(mp4|webm|mov|m4v|3gp|avi)$/.test(path)) return true;
+  return /\/video\/upload\//.test(u);
+}
+
 /** Prefilled "I want to order…" WhatsApp deep link for a product. */
 export function orderLink(phone: string | undefined, businessName: string, productName: string, price: string): string {
   const text = `Hello ${businessName}, I'd like to order: ${productName} (${price})`;

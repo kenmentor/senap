@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Search, X, Package, MessageCircle, ChevronLeft, MapPin } from "lucide-react";
 import type { Product } from "@/lib/demo/products";
 import { VIEWS, lowCount, statusOf, thumbFor, LOW_AT, type Item } from "@/lib/demo/catalog";
-import { formatPrice, orderLink, waDigits } from "@/lib/store";
+import { formatPrice, orderLink, waDigits, isVideoUrl } from "@/lib/store";
 import type { StoreBusiness, StoreProduct } from "@/lib/storefront";
 import ChatWallpaper from "@/components/story/ChatWallpaper";
 
@@ -200,10 +200,14 @@ export default function StoreGrid({
                   style={{ border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.025)" }}
                 >
                   <div className="relative aspect-square overflow-hidden" style={{ background: "#0e151a" }}>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={p.image || thumbOf(p, 0)} alt="" draggable={false} className="pointer-events-none h-full w-full object-cover transition duration-300 group-hover:scale-[1.04]" />
+                    {isVideoUrl(p.image) ? (
+                      <video src={p.image} muted playsInline preload="metadata" className="pointer-events-none h-full w-full object-cover" />
+                    ) : (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={p.image || thumbOf(p, 0)} alt="" draggable={false} className="pointer-events-none h-full w-full object-cover transition duration-300 group-hover:scale-[1.04]" />
+                    )}
                     <span className="absolute left-2.5 top-2.5 rounded-full px-2 py-1 text-[10.5px] font-semibold" style={{ background: "rgba(0,0,0,0.65)", color: s.color, border: `1px solid ${s.color}44`, backdropFilter: "blur(6px)" }}>
-                      {s.label}
+                      {isVideoUrl(p.image) ? `▶ ${s.label}` : s.label}
                     </span>
                   </div>
                   <div className="flex min-w-0 flex-1 flex-col p-3.5">
@@ -277,8 +281,14 @@ export default function StoreGrid({
               <div className="grid gap-6 p-5 md:grid-cols-[1.05fr_1fr] md:p-7">
                 <div>
                   <div className="overflow-hidden rounded-2xl" style={{ background: "#0e151a", border: "1px solid rgba(255,255,255,0.08)" }}>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img key={activeImg} src={selected.image || thumbOf(selected, activeImg)} alt={selected.name} draggable={false} className="aspect-square w-full object-cover" />
+                    {isVideoUrl(selected.image) ? (
+                      <video key={selected.id} src={selected.image} controls playsInline preload="metadata" className="aspect-square w-full object-cover" />
+                    ) : (
+                      <>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img key={activeImg} src={selected.image || thumbOf(selected, activeImg)} alt={selected.name} draggable={false} className="aspect-square w-full object-cover" />
+                      </>
+                    )}
                   </div>
                   {selected.image ? null : (
                     <>

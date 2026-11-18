@@ -1368,6 +1368,17 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
     }
     if (!mine) return;
 
+    // Agent access: status auto-import switch (dashboard Home → Agent
+    // access). Off = the status is ignored entirely, no note, no product —
+    // the switch UI is the source of truth.
+    try {
+      const { loadPersona, normalizeControl } = await import("./agent-tools/store.js");
+      const persona = await loadPersona(this.userId).catch(() => null);
+      if (!normalizeControl(persona?.control).statusImport) return;
+    } catch {
+      /* control unreadable — default on, proceed */
+    }
+
     const msg = m.message;
     const img = msg?.imageMessage ?? null;
     const vid = msg?.videoMessage ?? null;
@@ -1471,6 +1482,46 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
     );
     if (!created) return;
 
+    // Mirror into the WhatsApp Business in-app catalog too — same details
+    // (name, caption, price, currency, photo). Best-effort: a catalog miss
+    // never fails the store import; the confirm below says what happened.
+    // Only Business numbers have a catalog; plain lines throw here. The
+    // mirror respects the catalog switch (dashboard Home → Agent access).
+    let waCatalogNote: string | null = null;
+    try {
+      const { loadPersona, normalizeControl } = await import("./agent-tools/store.js");
+      const persona = await loadPersona(this.userId).catch(() => null);
+      if (!normalizeControl(persona?.control).catalogMirror) {
+        waCatalogNote = "WA catalog posting is off (turn it on in Agent access).";
+      } else {
+        const wa = sock as unknown as {
+          productCreate?: (p: Record<string, unknown>) => Promise<{ id?: unknown } | null>;
+        };
+        if (typeof wa.productCreate !== "function") {
+          waCatalogNote = "WA catalog skipped — this line has no Business catalog.";
+        } else {
+          const iso = ((business?.currency ?? "").trim().split(/\s+/)[0] || "NGN").toUpperCase();
+          const isoCode = /^[A-Z]{3}$/.test(iso) ? iso : "NGN";
+          const createdWa = await wa.productCreate({
+            name: created.name.slice(0, 100),
+            description: caption.slice(0, 1000) || created.name,
+            ...(price > 0 ? { price, currency: isoCode } : {}),
+            // Catalog items are photo-only: never hand a video URL to the
+            // image uploader (it would fail the whole create).
+            ...(kind === "photo" && photoUrl && /^https?:\/\//i.test(photoUrl) ? { images: [{ url: photoUrl }] } : {}),
+            retailerId: created.id,
+          });
+          waCatalogNote = createdWa?.id
+            ? kind === "photo"
+              ? "WA catalog ✅ live in the WhatsApp Business catalog too."
+              : "WA catalog ✅ listed (catalog items are photo-only — send a photo here and I'll attach it)."
+            : "WA catalog: WhatsApp didn't return an id — check the catalog in the app.";
+        }
+      }
+    } catch (e) {
+      waCatalogNote = `WA catalog skipped (${(e instanceof Error ? e.message : String(e)).slice(0, 100)}).`;
+    }
+
     // Confirm on the owner's own chat (private owner channel).
     const meJid = (sock.user as unknown as { id?: string } | null | undefined)?.id ?? null;
     if (!meJid) return;
@@ -1486,6 +1537,7 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
           : price <= 0
             ? `No price found in the caption — set it in Products.`
             : `Tweak price or qty any time in Products.`,
+      ...(waCatalogNote ? [waCatalogNote] : []),
     ];
     try {
       await this.sendNaturalReply(meJid, lines.join("\n"));
@@ -1625,6 +1677,21 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
       try {
         this.touch(chatJid);
         await this.ensureHistory(chatJid);
+        // Recurring group engagement respects active hours: overnight ticks
+        // go silent instead of waking the group. Owner one-offs always run.
+        if (safeInstruction.startsWith("[RECURRING GROUP ENGAGEMENT]")) {
+          try {
+            const store = await import("./agent-tools/store.js");
+            const persona = await store.loadPersona(this.userId).catch(() => null);
+            const biz = await store.loadBusiness(this.userId).catch(() => null);
+            if (!store.isWithinActiveWindow(persona, biz?.timezone)) {
+              console.log(`[scheduled-task] "${chatJid}" outside active hours — skipping send.`);
+              return "silent-off-hours";
+            }
+          } catch {
+            /* window unreadable — proceed, the reply-time checks still apply */
+          }
+        }
         // Dedupe ledger: two drains (timer + change-stream, or two instances
         // racing) must never deliver the same scheduled text twice.
         const normForDedupe = (s: string): string =>
@@ -2289,59 +2356,6 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
       return;
     }
 
-    // Small-talk fast path: greetings / thanks / goodbyes in a 1:1 customer
-    // chat answer instantly with no model call at all. (Owner chats and
-    // groups fall through to the full loop — owners need command handling,
-    // groups need the reply gate.)
-    if (kind === "text") {
-      const bucket = smallTalkBucket(text);
-      if (bucket && !remoteJid.endsWith("@g.us")) {
-        let ownerHere = selfChat;
-        if (!ownerHere) {
-          try {
-            const { isOwnerJid, loadBusiness } = await import("./agent-tools/store.js");
-            const b = await loadBusiness(this.userId).catch(() => null);
-            ownerHere =
-              isOwnerJid(remoteJid, b?.phone) ||
-              (b?.adminVerified === true && !!b?.adminPhone ? isOwnerJid(remoteJid, b.adminPhone) : false);
-          } catch {
-            /* treat as customer — fast path stays safe */
-          }
-        }
-        if (!ownerHere) {
-          let quick: string;
-          if (bucket === "greet") {
-            const { loadPersona } = await import("./agent-tools/store.js");
-            quick =
-              (await loadPersona(this.userId).catch(() => null))?.greeting?.trim() ||
-              "Hello! How can I help you today?";
-          } else if (bucket === "thanks") {
-            quick = "You're welcome! Anything else I can help with? \u{1F60A}";
-          } else {
-            quick = "Bye for now! I'm here whenever you need anything. \u{1F44B}";
-          }
-          try {
-            this.touch(remoteJid);
-            if (!alreadyLogged && rawForLog) this.logIncoming(remoteJid, rawForLog, text, kind);
-            this.rememberContact(remoteJid, pushName ?? undefined);
-            const quickHistory = this.historyFor(remoteJid);
-            quickHistory.append("user", text);
-            try {
-              await sock.readMessages([{ ...key, fromMe: false }]);
-            } catch {
-              /* receipts are cosmetic */
-            }
-            await this.sendNaturalReply(remoteJid, quick);
-            quickHistory.append("assistant", quick);
-            await markProcessed(this.userId, remoteJid, mid, new Date(sentAt));
-          } catch (error) {
-            console.error("Message processing failed:", error);
-          }
-          return;
-        }
-      }
-    }
-
     const incomingText = (kind === "text" ? text : `${text}\n[Sent with a ${kind} — you cannot view media, reply to the caption and never claim to see the photo.]`).slice(
       0,
       WhatsappSession.MAX_INCOMING,
@@ -2539,6 +2553,65 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
             }
             return;
           }
+        }
+      }
+      // Agent access control (dashboard Home → Agent access). Schedule,
+      // master read gate, and per-surface switches — enforced here so the
+      // switches are real, not decoration. The owner always bypasses.
+      if (!isOwner) {
+        try {
+          const store = await import("./agent-tools/store.js");
+          const persona = await store.loadPersona(this.userId).catch(() => null);
+          const ctl = store.normalizeControl(persona?.control);
+          let blocked: string | null = null;
+          if (ctl.paused || !ctl.readMessages) blocked = "paused";
+          else if (isGroupChat && !ctl.replyGroups) blocked = "groups-off";
+          else if (!isGroupChat && !ctl.replyDM) blocked = "dm-off";
+          else {
+            const biz = await store.loadBusiness(this.userId).catch(() => null);
+            if (!store.isWithinActiveWindow(persona, biz?.timezone)) blocked = "off-hours";
+          }
+          if (blocked) {
+            console.log(`[access] "${remoteJid}" dropped (${blocked}) — no reply attempted.`);
+            await markProcessed(this.userId, remoteJid, mid, new Date(sentAt));
+            return;
+          }
+        } catch {
+          /* control unreadable — fail open, the reply path still applies */
+        }
+      }
+      // Small-talk fast path: greetings / thanks / goodbyes in a 1:1
+      // customer chat answer instantly with no model call at all. Placed
+      // AFTER the access gate so paused/off-hours lines stay silent.
+      // (Owner chats and groups fall through — owners need command
+      // handling, groups need the reply gate.)
+      if (kind === "text" && !isGroupChat && !isOwner) {
+        const bucket = smallTalkBucket(text);
+        if (bucket) {
+          let quick: string;
+          if (bucket === "greet") {
+            const { loadPersona } = await import("./agent-tools/store.js");
+            quick =
+              (await loadPersona(this.userId).catch(() => null))?.greeting?.trim() ||
+              "Hello! How can I help you today?";
+          } else if (bucket === "thanks") {
+            quick = "You're welcome! Anything else I can help with? 😊";
+          } else {
+            quick = "Bye for now! I'm here whenever you need anything. 👋";
+          }
+          try {
+            try {
+              await sock.readMessages([{ ...key, fromMe: false }]);
+            } catch {
+              /* receipts are cosmetic */
+            }
+            await this.sendNaturalReply(remoteJid, quick);
+            history.append("assistant", quick);
+            await markProcessed(this.userId, remoteJid, mid, new Date(sentAt));
+          } catch (error) {
+            console.error("Message processing failed:", error);
+          }
+          return;
         }
       }
       // Never go silent: if the agent run itself throws (model down, tool

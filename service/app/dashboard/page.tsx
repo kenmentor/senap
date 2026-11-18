@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Plus, RefreshCw, Check, MessageCircle, Clock3, Zap, X, Sparkles, Send, ChevronDown, AlertTriangle } from "lucide-react";
 import { lowCount, statusOf, thumbFor, LOW_AT, type Item } from "@/lib/demo/catalog";
+import AgentAccess from "@/components/dashboard/AgentAccess";
 
 type RecentChat = { userId: string; jid: string; name: string; imgUrl?: string | null; text: string; fromMe: boolean; ts: number; messages: number };
 type ScheduledJob = { id: string; userId: string; chat: string; kind: string; text: string; runAt: string };
@@ -342,6 +343,10 @@ export default function DashboardHome() {
           </button>
         </div>
       ))}
+      {/* Agent access — schedule, read/reply gates, status + catalog switches. */}
+      <div className="mt-2.5 sm:mt-3.5">
+        <AgentAccess />
+      </div>
       {/* 3 stats — live from /api/activity, fallback while offline.
           Compact 3-across row on phones (native dashboard feel), roomy cards on desktop. */}
       <div className="grid grid-cols-3 gap-2 sm:gap-3.5">

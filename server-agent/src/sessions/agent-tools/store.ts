@@ -64,6 +64,47 @@ interface AgentRow {
   days: string[];
   open: string;
   close: string;
+  control?: AgentControl;
+}
+
+/** Per-line agent access switches (dashboard Home → Agent access). */
+export interface AgentControl {
+  /** Master kill-switch: no customer replies at all (owner bypasses). */
+  paused: boolean;
+  /** Master read gate: when off, customer messages are dropped silently. */
+  readMessages: boolean;
+  /** Replies to 1:1 chats. */
+  replyDM: boolean;
+  /** Replies in groups. */
+  replyGroups: boolean;
+  /** Status → product auto-import. */
+  statusImport: boolean;
+  /** Mirror imported products into the WA Business catalog. */
+  catalogMirror: boolean;
+}
+
+export const DEFAULT_CONTROL: AgentControl = {
+  paused: false,
+  readMessages: true,
+  replyDM: true,
+  replyGroups: true,
+  statusImport: true,
+  catalogMirror: true,
+};
+
+/** Coerce a stored control doc (partial/legacy) into full switches. */
+export function normalizeControl(raw: unknown): AgentControl {
+  const r = (raw ?? {}) as Partial<Record<keyof AgentControl, unknown>>;
+  const b = (v: unknown, fallback: boolean): boolean =>
+    typeof v === "boolean" ? v : fallback;
+  return {
+    paused: b(r.paused, false),
+    readMessages: b(r.readMessages, true),
+    replyDM: b(r.replyDM, true),
+    replyGroups: b(r.replyGroups, true),
+    statusImport: b(r.statusImport, true),
+    catalogMirror: b(r.catalogMirror, true),
+  };
 }
 
 const AgentView =
@@ -82,6 +123,7 @@ const AgentView =
         days: [String],
         open: String,
         close: String,
+        control: { type: Schema.Types.Mixed, default: undefined },
       },
       { collection: "agents" },
     ),
@@ -202,6 +244,18 @@ export interface ShopProduct {
   image: string;
   /** Absolute http(s) URL the assistant can actually send, or "" when none. */
   imageUrl: string;
+  /** Same for video: absolute/sendable video URL (or store-photo ref), else "". */
+  videoUrl: string;
+}
+
+/** True for video media: data:video blobs, .mp4/.webm/.mov, Cloudinary video paths. */
+export function isVideoUrl(url: string | undefined): boolean {
+  const u = (url ?? "").trim();
+  if (!u) return false;
+  if (/^data:video\//i.test(u)) return true;
+  const path = u.split("?")[0].toLowerCase();
+  if (/\.(mp4|webm|mov|m4v|3gp|avi)$/.test(path)) return true;
+  return /\/video\/upload\//.test(u);
 }
 
 export interface AssistantPersona {
@@ -214,6 +268,21 @@ export interface AssistantPersona {
   days: string[];
   open: string;
   close: string;
+  control: AgentControl;
+}
+
+/** Schedule gate: true when the line is inside its active days + hours.
+ *  No days set, or open/close unset = always active (backward compatible). */
+export function isWithinActiveWindow(
+  persona: { days?: string[]; open?: string; close?: string } | null,
+  timezone?: string,
+): boolean {
+  if (!persona) return true;
+  const days = persona.days ?? [];
+  const open = (persona.open ?? "").trim();
+  const close = (persona.close ?? "").trim();
+  if (days.length === 0 || !open || !close) return true;
+  return isOpenNow(days, open, close, timezone ?? "Africa/Lagos");
 }
 
 export interface BusinessInfo {
@@ -377,8 +446,13 @@ function toShopProduct(d: ProductRow): ShopProduct {
   const id = String(d._id);
   // Embedded store photos (status imports) travel as a short `store-photo:<id>`
   // reference so multi-KB blobs never touch the model's context — send_media
-  // resolves the reference back to bytes at send time.
-  const imageUrl = image.startsWith("data:") ? `store-photo:${id}` : resolveImageUrl(image);
+  // resolves the reference back to bytes at send time (photos and videos alike).
+  // Video products expose videoUrl and leave imageUrl empty, so photo-only
+  // paths (image bubbles, catalog uploads) never receive a video by mistake.
+  const isVideo = isVideoUrl(image);
+  const sendable = image.startsWith("data:") ? `store-photo:${id}` : resolveImageUrl(image);
+  const imageUrl = isVideo ? "" : sendable;
+  const videoUrl = isVideo ? sendable : "";
   return {
     id,
     name: d.name,
@@ -391,6 +465,7 @@ function toShopProduct(d: ProductRow): ShopProduct {
     condition: (d.condition ?? "").trim() || "New",
     image,
     imageUrl,
+    videoUrl,
   };
 }
 
@@ -431,6 +506,7 @@ async function loadPersonaFresh(userId?: string): Promise<AssistantPersona | nul
     days: doc.days ?? [],
     open: doc.open,
     close: doc.close,
+    control: normalizeControl((doc as { control?: unknown }).control),
   };
 }
 

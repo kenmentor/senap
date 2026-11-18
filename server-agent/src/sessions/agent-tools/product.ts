@@ -12,7 +12,7 @@ export const productTools: ToolDefinition[] = [
   {
     name: "search_products",
     description:
-      "Search the shop inventory by name, SKU, or category. Returns matching products with price, stock quantity, availability, CONDITION (Brand New / UK Used / Used), description, and imageUrl (a sendable photo URL, or empty when the product has no public photo). When a customer asks about an item, ALWAYS show its photo: call this first, then send_media with the imageUrl in the current chat, then reply dealer-style with condition + price.",
+      "Search the shop inventory by name, SKU, or category. Returns matching products with price, stock quantity, availability, CONDITION (Brand New / UK Used / Used), description, and imageUrl (a sendable photo URL, or empty when the product has no public photo) plus videoUrl when the product is a video (send with send_media kind video). When a customer asks about an item, ALWAYS show its media: call this first, then send_media with the imageUrl (or videoUrl with kind video) in the current chat, then reply dealer-style with condition + price.",
     scope: "customer",
     parameters: {
       type: "object",
@@ -43,6 +43,8 @@ export const productTools: ToolDefinition[] = [
         description: p.description,
         imageUrl: p.imageUrl,
         hasPhoto: p.imageUrl.length > 0,
+        videoUrl: p.videoUrl,
+        hasVideo: p.videoUrl.length > 0,
       });
       if (products.length === 0) {
         // Never hand the model an empty shelf (it would announce "zero

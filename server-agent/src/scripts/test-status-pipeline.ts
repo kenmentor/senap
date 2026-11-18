@@ -31,6 +31,7 @@ function check(label: string, ok: boolean, detail = ""): void {
 
 async function main(): Promise<void> {
   const { parseStatusCaption, statusCaptionLooksSellish } = await import("../sessions/whatsapp-session.js");
+  const { isVideoUrl } = await import("../sessions/agent-tools/store.js");
 
   // 1. Price parsing.
   const priceCases: [string, number][] = [
@@ -64,7 +65,24 @@ async function main(): Promise<void> {
     check(`sellish "${caption.slice(0, 34)}"`, got === want, `want ${want}, got ${got}`);
   }
 
-  // 3. Wiring (static — fails loudly if the route is ever removed).
+  // 3. Video media detection (storefront/player + agent card routing).
+  const videoCases: [string, boolean][] = [
+    ["https://res.cloudinary.com/demo/video/upload/v1/abc123.mp4", true],
+    ["https://res.cloudinary.com/demo/video/upload/v1/abc123", true],
+    ["https://example.com/clip.webm", true],
+    ["data:video/mp4;base64,AAAA", true],
+    ["https://res.cloudinary.com/demo/image/upload/v1/abc123.jpg", false],
+    ["https://example.com/photo.png?x=1", false],
+    ["", false],
+  ];
+  for (const [url, want] of videoCases) {
+    const got = isVideoUrl(url);
+    check(`isVideo "${url.slice(0, 40)}"`, got === want, `want ${want}, got ${got}`);
+  }
+  // A priced video caption is sellish regardless of media kind.
+  check("video caption with price is sellish", statusCaptionLooksSellish("iPhone 11 256GB — 220k, DM me") === true);
+
+  // 4. Wiring (static — fails loudly if the route is ever removed).
   check(
     "messages.upsert routes status@broadcast → handleStatusPost",
     sessionSrc.includes('if (remoteJid === "status@broadcast")') &&
@@ -90,8 +108,17 @@ async function main(): Promise<void> {
     "creates the product + confirms on owner chat",
     sessionSrc.includes("createShopProduct({") && sessionSrc.includes("Saved to your store"),
   );
+  check(
+    "WA catalog images gated to photos (videos never uploaded as images)",
+    sessionSrc.includes('kind === "photo"') && sessionSrc.includes("productCreate({"),
+  );
+  const storeSrc = readFileSync(join(here, "..", "sessions", "agent-tools", "store.ts"), "utf8");
+  check(
+    "product cards split photo/video URLs",
+    storeSrc.includes("videoUrl") && storeSrc.includes("isVideoUrl"),
+  );
 
-  // 4. Config presence (values never printed).
+  // 5. Config presence (values never printed).
   check("CLOUDFLARE_ACCOUNT_ID set (classifier)", (process.env.CLOUDFLARE_ACCOUNT_ID ?? "").trim().length > 0);
   check("CLOUDFLARE_API_TOKEN set (classifier)", (process.env.CLOUDFLARE_API_TOKEN ?? "").trim().length > 0);
   const cloudinary = (process.env.CLOUDINARY_URL ?? "").trim().length > 0;

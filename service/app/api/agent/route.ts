@@ -61,6 +61,19 @@ export async function PUT(req: Request) {
     ] as const;
     const patch: Record<string, unknown> = {};
     for (const k of allowed) if (b[k] !== undefined) patch[k] = b[k];
+    // Access switches: only known boolean keys, so a stray payload can't
+    // smuggle anything into the agent doc.
+    if (b.control && typeof b.control === "object") {
+      const src = b.control as Record<string, unknown>;
+      const clean: Record<string, boolean> = {};
+      for (const k of ["paused", "readMessages", "replyDM", "replyGroups", "statusImport", "catalogMirror"] as const) {
+        if (typeof src[k] === "boolean") clean[k] = src[k];
+      }
+      if (Object.keys(clean).length > 0) {
+        const existing = await Agent.findOne({ key }).select("control").lean();
+        patch.control = { ...((existing?.control as Record<string, boolean> | undefined) ?? {}), ...clean };
+      }
+    }
     const doc = await Agent.findOneAndUpdate(
       { key },
       { $set: { ...patch, ownerId: me.id } },

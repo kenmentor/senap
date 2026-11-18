@@ -21,6 +21,15 @@ export interface AgentDoc extends Document {
   days: string[];
   open: string;
   close: string;
+  /** Agent access switches (Home → Agent access). Missing = all on. */
+  control?: {
+    paused?: boolean;
+    readMessages?: boolean;
+    replyDM?: boolean;
+    replyGroups?: boolean;
+    statusImport?: boolean;
+    catalogMirror?: boolean;
+  };
 }
 
 const AgentSchema = new Schema<AgentDoc>(
@@ -43,7 +52,18 @@ const AgentSchema = new Schema<AgentDoc>(
   exReply: { type: String, default: "Yes — 12 left at ₦155,000 each! How many should I reserve for you?" },
     days: { type: [String], default: ["Mon", "Tue", "Wed", "Thu", "Fri"] },
     open: { type: String, default: "08:00" },
-    close: { type: String, default: "21:00" }
+    close: { type: String, default: "21:00" },
+    control: {
+      type: {
+        paused: Boolean,
+        readMessages: Boolean,
+        replyDM: Boolean,
+        replyGroups: Boolean,
+        statusImport: Boolean,
+        catalogMirror: Boolean,
+      },
+      default: undefined,
+    },
   },
   { versionKey: false }
 );

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Search, Plus, Pencil, Trash2, X, Package, ChevronLeft, RefreshCw } from "lucide-react";
 import { VIEWS, formatUpdated, lowCount, statusOf, thumbFor, LOW_AT, type Item } from "@/lib/demo/catalog";
+import { isVideoUrl } from "@/lib/store";
 
 type Draft = { name: string; sku: string; unitPrice: string; quantity: string; category: string; condition: string; description: string; image: string };
 
@@ -217,10 +218,14 @@ export default function ProductsPage() {
                 style={{ border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.025)" }}
               >
                 <div className="relative aspect-square overflow-hidden" style={{ background: "#0e151a" }}>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={p.image || thumbFor(p, 0)} alt="" draggable={false} className="pointer-events-none h-full w-full object-cover transition duration-300 group-hover:scale-[1.04]" />
+                  {isVideoUrl(p.image) ? (
+                    <video src={p.image} muted playsInline preload="metadata" className="pointer-events-none h-full w-full object-cover" />
+                  ) : (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={p.image || thumbFor(p, 0)} alt="" draggable={false} className="pointer-events-none h-full w-full object-cover transition duration-300 group-hover:scale-[1.04]" />
+                  )}
                   <span className="absolute left-2.5 top-2.5 rounded-full px-2 py-1 text-[10.5px] font-semibold" style={{ background: "rgba(0,0,0,0.65)", color: s.color, border: `1px solid ${s.color}44`, backdropFilter: "blur(6px)" }}>
-                    {s.label}
+                    {isVideoUrl(p.image) ? `▶ ${s.label}` : s.label}
                   </span>
                   <button
                     onClick={(e) => { e.stopPropagation(); openEdit(p); }}
@@ -275,10 +280,16 @@ export default function ProductsPage() {
               {/* Gallery */}
               <div>
                 <div className="overflow-hidden rounded-2xl" style={{ background: "#0e151a", border: "1px solid rgba(255,255,255,0.08)" }}>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img key={activeImg} src={selected.image || thumbFor(selected, activeImg)} alt={selected.image ? selected.name : `${selected.name} — ${VIEWS[activeImg]} view`} draggable={false} className="aspect-square w-full object-cover" />
+                  {isVideoUrl(selected.image) ? (
+                    <video key={selected.id} src={selected.image} controls playsInline preload="metadata" className="aspect-square w-full object-cover" />
+                  ) : (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img key={activeImg} src={selected.image || thumbFor(selected, activeImg)} alt={selected.image ? selected.name : `${selected.name} — ${VIEWS[activeImg]} view`} draggable={false} className="aspect-square w-full object-cover" />
+                  )}
                 </div>
-                {selected.image ? (
+                {isVideoUrl(selected.image) ? (
+                  <p className="mt-2.5 text-[11.5px]" style={{ color: "#636c73" }}>Real video · tap Edit to change it</p>
+                ) : selected.image ? (
                   <p className="mt-2.5 text-[11.5px]" style={{ color: "#636c73" }}>Real photo · tap Edit to change it</p>
                 ) : (
                   <>

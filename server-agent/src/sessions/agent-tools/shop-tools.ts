@@ -38,7 +38,7 @@ export const shopTools: ToolDefinition[] = [
   {
     name: "get_store_link",
     description:
-      "Get the shop's public buyer storefront URL (photos, prices, WhatsApp order buttons). Call it when a customer asks for the full list, a catalogue, a link/website, or wants to browse everything on their own — then paste the URL into your reply as plain text (WhatsApp auto-previews it). Never invent the URL; always use the one this tool returns.",
+      "Get the shop's public buyer storefront URL (photos, prices, WhatsApp order buttons). Call it when a customer asks for the full list, a catalogue, a link/website, or wants to browse everything on their own — then paste the returned storeUrl into your reply as plain text, CHARACTER-FOR-CHARACTER (WhatsApp auto-previews it). Never retype, shorten, 'correct', or rebuild it, and never use any other domain — a single wrong character sends the customer nowhere.",
     scope: "customer",
     parameters: { type: "object", properties: {}, additionalProperties: false },
     execute: async (_args, ctx) => {
@@ -46,7 +46,11 @@ export const shopTools: ToolDefinition[] = [
         storeUrl(ctx.userId).catch(() => null),
         loadBusiness(ctx.userId).catch(() => null),
       ]);
-      if (!url) return { error: "Store link is not available right now." };
+      if (!url)
+        return {
+          error:
+            "Store link is not available right now. Do NOT paste any link, domain, or address from memory — tell the customer you will share the catalogue link shortly.",
+        };
       return {
         storeUrl: url,
         businessName: business?.name ?? "Shop",

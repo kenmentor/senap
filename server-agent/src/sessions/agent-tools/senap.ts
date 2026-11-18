@@ -150,6 +150,8 @@ export const senapTools: ToolDefinition[] = [
         status: product.status,
         imageUrl: product.imageUrl,
         hasPhoto: product.imageUrl.length > 0,
+        videoUrl: product.videoUrl,
+        hasVideo: product.videoUrl.length > 0,
         specs: spec ?? { note: "Spec sheet not filed — sell from description + condition.", description: product.description },
         verdict,
         whoFor:
@@ -251,6 +253,8 @@ export const senapTools: ToolDefinition[] = [
           stock: p.quantity,
           imageUrl: p.imageUrl,
           hasPhoto: p.imageUrl.length > 0,
+          videoUrl: p.videoUrl,
+          hasVideo: p.videoUrl.length > 0,
           why: `${p.condition} • ${specFor(p.sku)?.chip ?? p.category} • ${naira(p.unitPrice)}`,
           dealerLine: `${p.name} — ${p.condition === "New" ? "brand new, sealed" : p.condition.toLowerCase()} — just ${Math.round(p.unitPrice / 1000)}k${p.quantity <= 5 ? " (only " + p.quantity + " left)" : ""}`,
         })),
