@@ -144,6 +144,7 @@ function Section({
 export default function AgentAccess() {
   const [lines, setLines] = useState<{ id: string; number: string; engineId?: string }[]>([]);
   const [line, setLine] = useState("");
+  const [avatars, setAvatars] = useState<Record<string, string | null>>({});
   const [days, setDays] = useState<string[]>([...DAYS.slice(0, 5)]);
   const [open, setOpen] = useState("08:00");
   const [close, setClose] = useState("21:00");
@@ -219,6 +220,34 @@ export default function AgentAccess() {
     load(line);
   }, [line, load]);
 
+  // Real WhatsApp avatars for my lines (best-effort, initials fallback).
+  useEffect(() => {
+    if (lines.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const entries = await Promise.all(
+        lines.map(async (a) => {
+          const id = a.engineId ?? a.number;
+          try {
+            const res = await fetch(`/api/line-avatar?line=${encodeURIComponent(id)}`);
+            if (!res.ok) return [id, null] as const;
+            const data = await res.json();
+            const url = typeof data?.url === "string" && data.url.startsWith("http") ? data.url : null;
+            return [id, url] as const;
+          } catch {
+            return [id, null] as const;
+          }
+        }),
+      );
+      if (!cancelled) {
+        setAvatars(Object.fromEntries(entries));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [lines]);
+
   const save = async (key: string, patch: Record<string, unknown>, controlPatch?: Partial<Control>) => {
     if (!line || saving) return;
     setSaving(key);
@@ -272,8 +301,13 @@ export default function AgentAccess() {
   return (
     <section className="rounded-3xl px-4 py-4 sm:px-5" style={{ background: "rgba(0,0,0,0.35)", border: "1px solid rgba(255,255,255,0.09)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
       <header className="flex items-center gap-3 px-1 py-1">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl" style={{ background: "#00a884", color: "#04241d" }}>
-          <Bot size={20} strokeWidth={2.25} />
+        <span className="relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-2xl" style={{ background: "#00a884", color: "#04241d" }}>
+          {avatars[line] ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={avatars[line] as string} alt="" draggable={false} className="absolute inset-0 h-full w-full object-cover" />
+          ) : (
+            <Bot size={20} strokeWidth={2.25} />
+          )}
         </span>
         <span className="min-w-0 flex-1">
           <span className="block text-[16px] font-bold leading-tight" style={{ color: "#fff" }}>Agent access</span>
@@ -292,6 +326,7 @@ export default function AgentAccess() {
               const id = a.engineId ?? a.number;
               const active = id === line;
               const initials = (a.number || "?").replace(/\D/g, "").slice(-2) || "•";
+              const img = avatars[id];
               return (
                 <button
                   key={a.id}
@@ -299,16 +334,21 @@ export default function AgentAccess() {
                   disabled={!!saving}
                   title={a.number}
                   aria-label={`Switch to ${a.number}`}
-                  className="flex h-10 w-10 items-center justify-center rounded-full text-[11px] font-bold transition disabled:opacity-50"
+                  className="relative flex h-10 w-10 items-center justify-center overflow-hidden rounded-full text-[11px] font-bold transition disabled:opacity-50"
                   style={{
-                    background: active ? "#00a884" : "rgba(255,255,255,0.08)",
+                    background: img ? "transparent" : active ? "#00a884" : "rgba(255,255,255,0.08)",
                     color: active ? "#04241d" : "#cfd6db",
                     border: active ? "2px solid #00a884" : "2px solid rgba(255,255,255,0.15)",
                     marginLeft: idx === 0 ? 0 : -10,
                     zIndex: active ? 2 : 1,
                   }}
                 >
-                  {initials}
+                  {img ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={img} alt="" draggable={false} className="absolute inset-0 h-full w-full object-cover" />
+                  ) : (
+                    initials
+                  )}
                 </button>
               );
             })}

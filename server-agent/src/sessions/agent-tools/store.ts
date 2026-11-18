@@ -245,10 +245,12 @@ export async function resolveScopeOwner(scope?: string): Promise<string | null> 
   return null;
 }
 
-/** Owner filter that keeps working on legacy ownerless docs until claimed. */
-function ownerOrLegacy(owner: string | null): Record<string, unknown>[] {
-  if (!owner) return [];
-  return [{ $or: [{ ownerId: owner }, { ownerId: { $in: [null, ""] } }] }];
+/** Strict owner filter — unknown owner matches NOTHING (never the world).
+ *  Every store is isolated: products, settings and personas resolve only
+ *  through the line's linked owner, and an unresolvable scope reads empty. */
+function ownerOnly(owner: string | null): Record<string, unknown> | null {
+  if (!owner) return null;
+  return { ownerId: owner };
 }
 
 export interface ShopProduct {
@@ -325,7 +327,10 @@ export async function findProducts(query: string, limit = 5, scope?: string): Pr
   await ensureConn();
   const q = query.trim();
   const owner = scope ? await resolveScopeOwner(scope).catch(() => null) : null;
-  const and: Record<string, unknown>[] = [...ownerOrLegacy(owner)];
+  const only = ownerOnly(owner);
+  // Unresolvable scope (unlinked line, unknown id) reads EMPTY — never global.
+  if (!only) return [];
+  const and: Record<string, unknown>[] = [only];
   if (q) {
     and.push({
       $or: [
@@ -335,7 +340,7 @@ export async function findProducts(query: string, limit = 5, scope?: string): Pr
       ],
     });
   }
-  const filter = and.length > 0 ? { $and: and } : {};
+  const filter = { $and: and };
   const docs = await ProductView.find(filter)
     .limit(Math.min(Math.max(limit, 1), 10))
     .lean();
@@ -346,13 +351,11 @@ export async function findProductByIdOrSku(idOrSku: string, scope?: string): Pro
   await ensureConn();
   const q = idOrSku.trim();
   const owner = scope ? await resolveScopeOwner(scope).catch(() => null) : null;
-  const matchesOwner = (d: ProductRow): boolean =>
-    !owner || !d.ownerId || d.ownerId === owner;
+  if (!owner) return null;
+  const matchesOwner = (d: ProductRow): boolean => d.ownerId === owner;
   const byId = await ProductView.findById(q).lean().catch(() => null);
   if (byId && matchesOwner(byId)) return toShopProduct(byId);
-  const and: Record<string, unknown>[] = [...ownerOrLegacy(owner)];
-  and.push({ $or: [{ sku: q }, { name: { $regex: `^${q}$`, $options: "i" } }] });
-  const doc = await ProductView.findOne({ $and: and }).lean();
+  const doc = await ProductView.findOne({ $and: [{ ownerId: owner }, { $or: [{ sku: q }, { name: { $regex: `^${q}$`, $options: "i" } }] }] }).lean();
   if (!doc) return null;
   return toShopProduct(doc);
 }
@@ -377,6 +380,10 @@ export async function createShopProduct(input: {
   image?: string;
   category?: string;
 }): Promise<{ id: string; name: string } | null> {
+  const owner = (input.ownerId ?? "").trim() || null;
+  // No owner, no listing: unattributable docs could never be shown to the
+  // right store, so refuse instead of creating cross-store orphans.
+  if (!owner) return null;
   await ensureConn();
   const qty = Math.max(0, Math.floor(input.quantity));
   const price = Math.max(0, input.unitPrice);
@@ -392,7 +399,7 @@ export async function createShopProduct(input: {
     description: input.description.slice(0, 1000),
     image: input.image ?? "",
     sold: 0,
-    ...(input.ownerId ? { ownerId: input.ownerId } : {}),
+    ownerId: owner,
   }).catch(() => null);
   if (!doc) return null;
   return { id: String(doc._id), name: doc.name as string };
@@ -403,8 +410,11 @@ export async function createShopProduct(input: {
  * SKU (fallback: exact name), so re-runs are safe. Returns match/insert counts.
  */
 export async function upsertProducts(items: unknown[], ownerId?: string): Promise<{ matched: number; upserted: number }> {
-  await ensureConn();
   const owner = (ownerId ?? "").trim() || null;
+  // Owner-scoped only: matching by global SKU/name could overwrite another
+  // store's product, and an unknown owner must write nothing.
+  if (!owner) return { matched: 0, upserted: 0 };
+  await ensureConn();
   let matched = 0;
   let upserted = 0;
   for (const raw of items.slice(0, 200)) {
@@ -413,9 +423,7 @@ export async function upsertProducts(items: unknown[], ownerId?: string): Promis
     const name = typeof r.name === "string" ? r.name.trim().slice(0, 200) : "";
     if (!name) continue;
     const sku = typeof r.sku === "string" ? r.sku.trim().slice(0, 60) : "";
-    const set: Record<string, unknown> = { name };
-    if (sku) set.sku = sku;
-    if (owner) set.ownerId = owner;
+    const set: Record<string, unknown> = { name, ownerId: owner };
     if (sku) set.sku = sku;
     if (typeof r.quantity !== "undefined") set.quantity = Math.max(0, Math.round(asFiniteNumber(r.quantity, 0)));
     if (typeof r.unitPrice !== "undefined") set.unitPrice = Math.max(0, asFiniteNumber(r.unitPrice, 0));
@@ -424,9 +432,9 @@ export async function upsertProducts(items: unknown[], ownerId?: string): Promis
     for (const k of ["category", "status", "description", "image", "condition"] as const) {
       if (typeof r[k] === "string" && (r[k] as string).trim()) set[k] = (r[k] as string).trim().slice(0, 1000);
     }
-    // Global SKU/name match (stable across the claim migration), then stamp
-    // the owner so the doc lands in their workspace, never someone else's.
-    const filter: Record<string, unknown> = sku ? { sku } : { name };
+    // Owner-scoped SKU/name match: one store's seed can never touch
+    // another store's product, even with an identical SKU.
+    const filter: Record<string, unknown> = sku ? { sku, ownerId: owner } : { name, ownerId: owner };
     const res = await ProductView.updateOne(filter, { $set: set }, { upsert: true });
     matched += res.matchedCount ?? 0;
     upserted += res.upsertedCount ?? 0;
@@ -516,7 +524,12 @@ async function loadPersonaFresh(userId?: string): Promise<AssistantPersona | nul
       if (owner) doc = await AgentView.findOne({ key: `default:${owner}` }).lean();
     }
   }
-  doc ??= await AgentView.findOne({ key: "default" }).lean();
+  // Generic defaults only: the shared doc is a last resort solely when it
+  // is ownerless — a claimed workspace's persona must never leak sideways.
+  if (!doc) {
+    const shared = await AgentView.findOne({ key: "default" }).lean();
+    if (shared && !(shared as { ownerId?: unknown }).ownerId) doc = shared;
+  }
   if (!doc) return null;
   return {
     name: doc.name,
@@ -548,8 +561,12 @@ async function loadBusinessFresh(scope?: string): Promise<BusinessInfo | null> {
   const owner = scope ? await resolveScopeOwner(scope).catch(() => null) : null;
   let doc = null;
   if (owner) doc = await SettingsView.findOne({ ownerId: owner }).lean();
-  // Legacy single-shop doc (pre-multi-user) until it is claimed.
-  doc ??= await SettingsView.findOne({ key: "default" }).lean();
+  // Generic defaults only: fall back to the shared doc solely when it is
+  // ownerless — a claimed workspace's settings must never leak sideways.
+  if (!doc) {
+    const shared = await SettingsView.findOne({ key: "default" }).lean();
+    if (shared && !(shared as { ownerId?: unknown }).ownerId) doc = shared;
+  }
   if (!doc?.business) return null;
   return {
     ...doc.business,

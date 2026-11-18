@@ -23,6 +23,10 @@ export type StoreBusiness = {
   phone: string;
   address: string;
   currency: string;
+  /** Real WhatsApp profile pic of the linked line, if privacy allows. Null = initials fallback. */
+  avatarUrl?: string | null;
+  /** Custom cover banner (owner upload). Empty = placeholder. */
+  bannerImage?: string | null;
 };
 
 export type StoreData = { business: StoreBusiness; products: StoreProduct[] };
@@ -105,9 +109,10 @@ export async function getStoreData(slug: string): Promise<StoreData | null> {
     }
 
     const owner = String((settings as { ownerId?: unknown }).ownerId ?? "");
-    // Legacy docs without an owner (pre-claim) still serve globally so a
-    // store never goes dark; claimed docs are strictly per-owner.
-    const productFilter = owner ? { ownerId: owner } : {};
+    // No owner, no store: an unclaimed settings doc must never serve a
+    // global catalog — every store is isolated to its owner.
+    if (!owner) return null;
+    const productFilter = { ownerId: owner };
     const docs = await Product.find(productFilter).sort({ name: 1 }).lean();
     const products: StoreProduct[] = docs.map((d) => {
       const row = docId(d) as Record<string, unknown>;
@@ -131,12 +136,43 @@ export async function getStoreData(slug: string): Promise<StoreData | null> {
       if (aOut !== bOut) return aOut - bOut;
       return a.name.localeCompare(b.name);
     });
+    // Real WhatsApp avatar for the shop logo (best-effort, privacy-respecting).
+    // Falls back to initials when offline, unlinked, or privacy-blocked.
+    let avatarUrl: string | null = null;
+    try {
+      const { LinkedAccount } = await import("@/lib/db/models/LinkedAccount");
+      const lineDocs = owner
+        ? ((await LinkedAccount.find({ ownerId: owner }).select("engineId").lean()) as { engineId?: unknown }[])
+        : [];
+      const lineId = lineDocs.map((d) => String(d.engineId || "").trim()).filter(Boolean)[0] ?? null;
+      if (lineId) {
+        const rawBase = (process.env.AGENT_URL ?? process.env.NEXT_PUBLIC_AGENT_URL ?? "http://localhost:3001").trim().replace(/\/+$/, "");
+        const base = /^[a-z][a-z0-9+.-]*:\/\//i.test(rawBase) ? rawBase : `https://${rawBase.replace(/^\/+/, "")}`;
+        const key = (process.env.AGENT_API_KEY ?? process.env.NEXT_PUBLIC_AGENT_KEY ?? "").trim();
+        const headers: Record<string, string> = key ? { authorization: `Bearer ${key}`, "x-agent-key": key } : {};
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 4000);
+        const stateRes = await fetch(`${base}/sessions/${encodeURIComponent(lineId)}`, { signal: ctrl.signal, headers }).catch(() => null);
+        const state = (await stateRes?.json().catch(() => null)) as { me?: unknown } | null;
+        const me = typeof state?.me === "string" && state.me ? state.me : null;
+        if (me) {
+          const avRes = await fetch(`${base}/sessions/${encodeURIComponent(lineId)}/avatar?jid=${encodeURIComponent(me)}`, { signal: ctrl.signal, headers }).catch(() => null);
+          const av = (await avRes?.json().catch(() => null)) as { url?: unknown } | null;
+          if (typeof av?.url === "string" && av.url.startsWith("http")) avatarUrl = av.url;
+        }
+        clearTimeout(timer);
+      }
+    } catch {
+      avatarUrl = null;
+    }
     return {
       business: {
         name: settings.business?.name ?? "Shop",
         phone: settings.business?.phone ?? "",
         address: settings.business?.address ?? "",
         currency: settings.business?.currency ?? "NGN ₦",
+        avatarUrl,
+        bannerImage: typeof (settings as { bannerImage?: unknown }).bannerImage === "string" ? ((settings as { bannerImage?: string }).bannerImage ?? "") : "",
       },
       products,
     };

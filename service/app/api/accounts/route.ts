@@ -36,6 +36,24 @@ export async function POST(req: Request) {
     // create two records. Same owner + engineId reuses the existing row.
     const existing = await LinkedAccount.findOne({ ownerId: me.id, engineId }).lean();
     if (existing) return NextResponse.json(docId(existing), { status: 200 });
+    // Isolation: a line already linked to a DIFFERENT workspace cannot be
+    // claimed here — otherwise anyone guessing an engineId could read that
+    // line's chats and drive its agent.
+    const taken = (await LinkedAccount.findOne({ engineId, ownerId: { $ne: me.id } })
+      .select("_id ownerId")
+      .lean()) as { _id: unknown; ownerId?: unknown } | null;
+    if (taken && String(taken.ownerId ?? "")) {
+      return NextResponse.json({ error: "That line is already linked to another workspace." }, { status: 409 });
+    }
+    // Ownerless legacy row for this engine: adopt it into this workspace.
+    if (taken) {
+      const claimed = await LinkedAccount.findByIdAndUpdate(
+        String(taken._id),
+        { $set: { ownerId: me.id, number: String(b.number).trim(), name: String(b.name || "Nala Phones").trim() || "Nala Phones", linkedAt: String(b.linkedAt || "Today"), unlinked: Boolean(b.unlinked ?? false) } },
+        { new: true },
+      ).lean();
+      if (claimed) return NextResponse.json(docId(claimed as unknown as { _id: unknown }), { status: 200 });
+    }
     const doc = await LinkedAccount.create({
       ownerId: me.id,
       number: String(b.number).trim(),

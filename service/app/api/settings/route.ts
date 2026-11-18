@@ -79,6 +79,7 @@ export async function PUT(req: Request) {
       }
     }
     if (typeof b.reportAccountId === "string") patch.reportAccountId = b.reportAccountId.trim().slice(0, 120);
+    if (typeof b.bannerImage === "string") patch.bannerImage = b.bannerImage.trim().slice(0, 2000);
     if (b.statusFlow && typeof b.statusFlow === "object") {
       const s = b.statusFlow as Record<string, unknown>;
       const clean: Record<string, unknown> = {};

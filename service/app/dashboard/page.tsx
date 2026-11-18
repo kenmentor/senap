@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { Plus, RefreshCw, Check, MessageCircle, Clock3, Zap, X, ChevronDown, AlertTriangle, BellRing, TrendingUp } from "lucide-react";
+import { Plus, RefreshCw, Check, MessageCircle, Clock3, Zap, X, ChevronDown, AlertTriangle, BellRing, TrendingUp, QrCode, Package, Store as StoreIcon, Bot } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { lowCount, statusOf, thumbFor, LOW_AT, type Item } from "@/lib/demo/catalog";
 import AgentAccess from "@/components/dashboard/AgentAccess";
@@ -227,6 +227,8 @@ export default function DashboardHome() {
   const [cost, setCost] = useState<{ used: number; total: number; pct: number } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
+  // Onboarding journey: null = unknown, 0 = first-timer (no lines linked yet).
+  const [lineCount, setLineCount] = useState<number | null>(null);
   const [sections, setSections] = useState<Record<string, boolean>>(() => {
     if (typeof window === "undefined") return { attention: true, growth: true };
     try {
@@ -339,6 +341,16 @@ export default function DashboardHome() {
     } finally {
       setLoading(false);
     }
+    // First-timer check (best-effort — never blocks the page).
+    try {
+      const res = await fetch("/api/accounts");
+      if (res.ok) {
+        const list = await res.json();
+        setLineCount(Array.isArray(list) ? list.length : 0);
+      }
+    } catch {
+      /* unknown — journey stays hidden */
+    }
   };
 
   useEffect(() => {
@@ -398,6 +410,100 @@ export default function DashboardHome() {
           <RefreshCw size={16} className={refreshing ? "animate-spin" : ""} />
         </button>
       </div>
+
+      {/* 0 — FIRST-TIMER JOURNEY: account ✓ → link WhatsApp → setup */}
+      {lineCount === 0 && (
+        <section className="overflow-hidden rounded-3xl px-4 py-4 sm:px-5" style={{ background: "rgba(0,0,0,0.35)", border: "1px solid rgba(0,168,132,0.35)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
+          <h2 className="px-1 text-[15px] font-bold" style={{ color: "#fff" }}>Get selling in 3 steps</h2>
+          <ol className="mt-3 flex flex-col divide-y divide-white/10" style={{ background: "rgba(0,0,0,0.18)", borderRadius: 12, borderTop: "1px solid rgba(255,255,255,0.07)" }}>
+            <li className="flex items-center gap-3 px-4 py-4">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl" style={{ background: "rgba(0,168,132,0.16)", color: "#00d19f" }}>
+                <Check size={17} strokeWidth={3} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[13.5px] font-semibold" style={{ color: "#e9edef" }}>1 · Account created</span>
+                <span className="block truncate text-[12px]" style={{ color: "#8a949b" }}>You&apos;re signed in — step done</span>
+              </span>
+            </li>
+            <li className="px-4 py-4">
+              <div className="flex items-center gap-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[13px] font-extrabold" style={{ background: "#00a884", color: "#04241d" }}>2</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[13.5px] font-semibold" style={{ color: "#e9edef" }}>Link your WhatsApp</span>
+                  <span className="block truncate text-[12px]" style={{ color: "#8a949b" }}>Scan once — she replies from your number</span>
+                </span>
+              </div>
+              <Link
+                href="/dashboard/link"
+                className="mt-3 flex min-h-[52px] w-full items-center justify-center gap-2 rounded-2xl px-4 text-[14px] font-bold transition active:scale-[0.99]"
+                style={{ background: "#00a884", color: "#04241d" }}
+              >
+                <QrCode size={18} strokeWidth={2.5} className="shrink-0" /> <span className="truncate">Link your WhatsApp</span>
+              </Link>
+            </li>
+            <li className="px-4 py-4">
+              <div className="flex items-center gap-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[13px] font-extrabold" style={{ background: "rgba(255,255,255,0.08)", color: "#aebac1" }}>3</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[13.5px] font-semibold" style={{ color: "#e9edef" }}>Set up your shop</span>
+                  <span className="block truncate text-[12px]" style={{ color: "#8a949b" }}>Products, banner, agent — after linking</span>
+                </span>
+              </div>
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                {[
+                  { href: "/dashboard/products" as const, icon: Package, label: "Products" },
+                  { href: "/dashboard/store" as const, icon: StoreIcon, label: "Store" },
+                  { href: "/dashboard/agent" as const, icon: Bot, label: "Agent" },
+                ].map((s) => {
+                  const Icon = s.icon;
+                  return (
+                    <Link
+                      key={s.href}
+                      href={s.href}
+                      className="flex min-h-[48px] flex-col items-center justify-center gap-1 rounded-xl px-2 text-[12px] font-semibold transition active:bg-white/10"
+                      style={{ background: "rgba(255,255,255,0.05)", color: "#e9edef" }}
+                    >
+                      <Icon size={17} strokeWidth={2} style={{ color: "#00d19f" }} />
+                      {s.label}
+                    </Link>
+                  );
+                })}
+              </div>
+              <Link href="/dashboard/store" className="mt-3 block text-center text-[12.5px] font-semibold" style={{ color: "#00d19f" }}>
+                Just looking? Preview your store →
+              </Link>
+            </li>
+          </ol>
+        </section>
+      )}
+
+      {/* 0b — LINKED BUT EMPTY: finish setup nudge */}
+      {lineCount !== null && lineCount > 0 && !loading && items.length === 0 && !dbDown && (
+        <section className="rounded-3xl px-4 py-4 sm:px-5" style={{ background: "rgba(0,0,0,0.35)", border: "1px solid rgba(255,255,255,0.09)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
+          <p className="px-1 text-[14px] font-bold" style={{ color: "#fff" }}>WhatsApp linked — finish setup</p>
+          <p className="mt-1 px-1 text-[12.5px]" style={{ color: "#8a949b" }}>Add your first product and she can start selling.</p>
+          <div className="mt-3 grid grid-cols-3 gap-2">
+            {[
+              { href: "/dashboard/products" as const, icon: Package, label: "Add product" },
+              { href: "/dashboard/store" as const, icon: StoreIcon, label: "Store banner" },
+              { href: "/dashboard/agent" as const, icon: Bot, label: "Configure agent" },
+            ].map((s) => {
+              const Icon = s.icon;
+              return (
+                <Link
+                  key={s.label}
+                  href={s.href}
+                  className="flex min-h-[52px] flex-col items-center justify-center gap-1 rounded-xl px-2 text-[12px] font-semibold transition active:scale-[0.98]"
+                  style={{ background: "#00a884", color: "#04241d" }}
+                >
+                  <Icon size={17} strokeWidth={2.25} />
+                  {s.label}
+                </Link>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       {/* 1 — AGENT ACCESS (single header lives inside AgentAccess) */}
       <AgentAccess />

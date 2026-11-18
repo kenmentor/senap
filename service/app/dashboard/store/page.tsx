@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import QRCode from "react-qr-code";
-import { Store, Copy, Check, ExternalLink, Package, AlertTriangle, Save, Pencil } from "lucide-react";
+import { Store, Copy, Check, ExternalLink, Package, AlertTriangle, Save, Pencil, ImagePlus, Trash2, Loader2 } from "lucide-react";
 import { cleanSlug } from "@/lib/store";
 
 type Biz = { name: string; phone: string };
@@ -13,6 +13,9 @@ export default function StorePage() {
   const [biz, setBiz] = useState<Biz>({ name: "Shop", phone: "" });
   const [slug, setSlug] = useState("");
   const [savedSlug, setSavedSlug] = useState("");
+  const [banner, setBanner] = useState("");
+  const [bannerDraft, setBannerDraft] = useState("");
+  const [uploading, setUploading] = useState(false);
   const [products, setProducts] = useState<Prod[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -37,6 +40,10 @@ export default function StorePage() {
         if (typeof s.storeSlug === "string" && s.storeSlug) {
           setSlug(s.storeSlug);
           setSavedSlug(s.storeSlug);
+        }
+        if (typeof s.bannerImage === "string") {
+          setBanner(s.bannerImage);
+          setBannerDraft(s.bannerImage);
         }
       }
       if (pRes.ok) {
@@ -99,6 +106,49 @@ export default function StorePage() {
       setError(e instanceof Error ? e.message : "Could not save.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const saveBanner = async (url: string) => {
+    const clean = url.trim().slice(0, 2000);
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bannerImage: clean }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Could not save banner.");
+      setBanner(typeof data.bannerImage === "string" ? data.bannerImage : clean);
+      setBannerDraft(typeof data.bannerImage === "string" ? data.bannerImage : clean);
+      flash(clean ? "Banner updated — live on your store now." : "Banner removed — back to placeholder.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not save banner.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const uploadBannerFile = async (f: File) => {
+    if (uploading) return;
+    setUploading(true);
+    setError(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", f);
+      const res = await fetch("/api/uploads", { method: "POST", body: fd });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Upload failed.");
+      const url = String(data.url || data.secure_url || "");
+      if (!url.startsWith("http")) throw new Error("Upload failed.");
+      setBannerDraft(url);
+      await saveBanner(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Upload failed.");
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -205,6 +255,71 @@ export default function StorePage() {
             </button>
           )}
         </div>
+      </div>
+
+      {/* Banner */}
+      <div className="mt-2.5 rounded-2xl p-5 sm:mt-3.5 sm:p-6" style={{ border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.025)" }}>
+        <h2 className="text-[15px] font-semibold" style={{ color: "#e9edef" }}>Store banner</h2>
+        <p className="mt-1 text-[12.5px]" style={{ color: "#8a949b" }}>Cover photo at the top of your store. Empty = placeholder.</p>
+        <div className="relative mt-3 overflow-hidden rounded-2xl" style={{ border: "1px solid rgba(255,255,255,0.1)", background: "linear-gradient(135deg, #0b3d33 0%, #0e151a 55%, #111b21 100%)" }}>
+          <div className="relative h-36 w-full sm:h-44">
+            {(bannerDraft || banner) ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={bannerDraft || banner} alt="Store banner preview" draggable={false} className="absolute inset-0 h-full w-full object-cover" />
+            ) : (
+              <div className="absolute inset-0 flex items-center justify-center text-[12.5px]" style={{ color: "#8a949b" }}>
+                Placeholder banner shows until you upload one
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="mt-3 flex flex-col gap-2.5 sm:flex-row">
+          <label className="flex min-h-[48px] flex-1 cursor-pointer items-center justify-center gap-2 rounded-xl text-[14px] font-semibold transition active:scale-[0.99]" style={{ background: "#00a884", color: "#04241d", opacity: uploading || saving ? 0.6 : 1 }}>
+            {uploading ? <Loader2 size={16} className="animate-spin" /> : <ImagePlus size={16} strokeWidth={2.5} />}
+            {uploading ? "Uploading…" : "Upload banner"}
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              disabled={uploading || saving}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void uploadBannerFile(f);
+                e.target.value = "";
+              }}
+            />
+          </label>
+          {(banner || bannerDraft) && (
+            <button
+              onClick={() => void saveBanner("")}
+              disabled={uploading || saving}
+              className="flex min-h-[48px] items-center justify-center gap-2 rounded-xl px-5 text-[13.5px] font-semibold transition active:bg-white/10 disabled:opacity-50"
+              style={{ border: "1px solid rgba(230,106,106,0.4)", color: "#e66a6a" }}
+            >
+              <Trash2 size={15} /> Remove
+            </button>
+          )}
+        </div>
+        <label className="mt-3 block text-[12px] font-medium" style={{ color: "#8a949b" }}>
+          Or paste image URL
+          <span className="mt-1.5 flex gap-2">
+            <input
+              value={bannerDraft}
+              onChange={(e) => setBannerDraft(e.target.value)}
+              placeholder="https://…"
+              className="min-w-0 flex-1 rounded-xl px-3.5 text-[13px] outline-none"
+              style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", color: "#e9edef", height: 44 }}
+            />
+            <button
+              onClick={() => void saveBanner(bannerDraft)}
+              disabled={saving || uploading || bannerDraft.trim() === (banner || "").trim()}
+              className="shrink-0 rounded-xl px-5 text-[13.5px] font-semibold transition active:scale-[0.99] disabled:opacity-50"
+              style={{ background: "#00a884", color: "#04241d", height: 44 }}
+            >
+              {saving ? "Saving…" : "Save"}
+            </button>
+          </span>
+        </label>
       </div>
 
       {/* Stats */}

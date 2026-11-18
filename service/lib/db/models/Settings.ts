@@ -24,6 +24,8 @@ export interface SettingsDoc extends Document {
   plan: "Starter" | "Growth" | "Scale";
   /** Buyer-facing storefront slug: the public store lives at /s/<storeSlug>. */
   storeSlug: string;
+  /** Custom store cover banner (Cloudinary/http URL). Empty = placeholder. */
+  bannerImage: string;
   /** Private admin line that receives reports and can command the agent. OTP-verified. */
   adminPhone: string;
   /** engineId of the linked account used to send reports + OTP codes. */
@@ -69,6 +71,7 @@ const SettingsSchema = new Schema<SettingsDoc>(
     },
     plan: { type: String, enum: ["Starter", "Growth", "Scale"], default: "Growth" },
     storeSlug: { type: String, default: "", trim: true },
+    bannerImage: { type: String, default: "", trim: true },
     adminPhone: { type: String, default: "", trim: true },
     reportAccountId: { type: String, default: "", trim: true },
     adminVerified: { type: Boolean, default: false },
