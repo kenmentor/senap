@@ -83,6 +83,16 @@ export async function isBlacklisted(userId: string, remoteJid: string): Promise<
   }
 }
 
+/** True when the owner explicitly allow-listed this chat (Link page). */
+export async function isWhitelisted(userId: string, remoteJid: string): Promise<boolean> {
+  try {
+    const access = await loadAccess(userId);
+    return access.white.has(remoteJid);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Activating a group agent implies the group is allowed through: drop any
  * block on it and add it to the allow list so EXCLUSIVE mode doesn't swallow

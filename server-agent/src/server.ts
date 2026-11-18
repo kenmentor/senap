@@ -1,5 +1,6 @@
 import { serve } from "@hono/node-server";
 import app, { sessions } from "./app.js";
+import { INSTANCE_ID } from "./instance.js";
 import { loadRegisteredSessionIds } from "./sessions/session-registry.js";
 import { startJobWorker } from "./sessions/job-runner.js";
 
@@ -15,7 +16,7 @@ process.on("uncaughtException", (err) => {
 });
 
 serve({ fetch: app.fetch, port }, (info) => {
-  console.log(`Hono server listening on http://localhost:${info.port}`);
+  console.log(`Hono server listening on http://localhost:${info.port} (instance ${INSTANCE_ID})`);
   startJobWorker(sessions);
   void bootResilient();
 });

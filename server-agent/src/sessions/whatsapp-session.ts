@@ -281,6 +281,10 @@ export class WhatsappSession {
    *  or WhatsApp outage retries patiently instead of spinning hot. */
   private reconnectFailures = 0;
 
+  /** Profile-picture cache: one IQ per JID per 10 min, not per dashboard row. */
+  private avatarCache = new Map<string, { url: string | null; at: number }>();
+  private static readonly AVATAR_CACHE_MS = 10 * 60_000;
+
   /**
    * Generation counter: every physical (re)connect bumps it. Stale sockets
    * and timers from a previous generation are ignored, so two sockets for
@@ -1155,10 +1159,18 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
 
   async getAvatarUrl(jid: string): Promise<string | null> {
     if (!this.sock) return null;
+    // Tiny TTL cache: the dashboard fans this out per row on every load,
+    // and each miss is a profile-picture IQ (automated harvesting at scale
+    // is exactly what gets numbers flagged — fetch once, reuse 10 min).
+    const hit = this.avatarCache.get(jid);
+    if (hit && Date.now() - hit.at < WhatsappSession.AVATAR_CACHE_MS) return hit.url;
     try {
-      return (await this.sock.profilePictureUrl(jid)) ?? null;
+      const url = (await this.sock.profilePictureUrl(jid)) ?? null;
+      if (this.avatarCache.size > 500) this.avatarCache.clear();
+      this.avatarCache.set(jid, { url, at: Date.now() });
+      return url;
     } catch {
-      return null;
+      return hit?.url ?? null;
     }
   }
 
@@ -2058,6 +2070,14 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
             console.log(
               `Session ${this.userId} was REPLACED by another client — possible duplicate agent process running. Backing off 60s before retry ${this.reconnectFailures}.`,
             );
+            // Three straight takeovers with no clean reconnect between them
+            // means two live copies are fighting — page the owner once a day.
+            // Fighting clients + reconnect storms read as automation to Meta.
+            if (this.reconnectFailures >= 3) {
+              void import("./model-outage.js")
+                .then((m) => m.reportSessionConflict(this.userId, this.ownForms()[0] ?? null))
+                .catch(() => {});
+            }
             setTimeout(() => {
               if (this.stopped || epoch !== this.epoch) return;
               this.connectToWhatsApp(this.userId).catch((err) => {

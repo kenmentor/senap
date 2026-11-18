@@ -211,6 +211,28 @@ export async function ownerIdForLine(lineId: string): Promise<string | null> {
 }
 
 /**
+ * Age of a linked line in days (from its LinkedAccount row). Null when
+ * unknown — callers treat unknown as mature to avoid throttling a live
+ * line during a DB blip. Used for new-number warm-up caps.
+ */
+export async function lineAgeDays(lineId: string): Promise<number | null> {
+  const id = (lineId ?? "").trim();
+  if (!id) return null;
+  try {
+    await ensureConn();
+    const doc = (await AccountView.findOne({ engineId: id })
+      .select("createdAt")
+      .lean()
+      .catch(() => null)) as { createdAt?: unknown } | null;
+    const at = doc?.createdAt instanceof Date ? doc.createdAt.getTime() : NaN;
+    if (!Number.isFinite(at)) return null;
+    return Math.max(0, (Date.now() - at) / 86_400_000);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Resolve a scope (line engineId or dashboard owner id) to an owner id.
  * Unknown/empty scope → null (legacy global reads, e.g. boot paths).
  */

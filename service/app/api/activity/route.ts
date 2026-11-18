@@ -236,7 +236,7 @@ export async function GET() {
     }));
     const outageDocs = await JobView.find({
       userId: { $in: lines },
-      repeatKey: { $regex: "^model-outage:" },
+      repeatKey: { $regex: "^(model-outage|session-conflict):" },
       createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60_000) },
     })
       .sort({ createdAt: -1 })

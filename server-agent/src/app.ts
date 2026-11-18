@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import mongoose from "mongoose";
+import { INSTANCE_ID } from "./instance.js";
 import SessionManager from "./sessions/session-manager.js";
 import { toolUseCounts } from "./sessions/tool-usage.js";
 
@@ -52,6 +53,7 @@ app.get("/health", (c) => {
   const states = sessions.listSessions();
   return c.json({
     status: "ok",
+    instance: INSTANCE_ID,
     mongo: mongoose.connection.readyState === 1 ? "up" : "down",
     sessions: states.length,
     connected: states.filter((s) => s.connected).length,

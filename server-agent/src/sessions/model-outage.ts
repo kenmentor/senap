@@ -42,9 +42,35 @@ export function shortCause(err: unknown): string {
   return msg.slice(0, 120).trim() || "unknown model error";
 }
 
+/** Owner's private channel: verified admin line → shop phone → own chat. */
+export async function resolveOwnerJid(userId: string, selfJid?: string | null): Promise<string> {
+  let ownerJid = "";
+  try {
+    const b = await loadBusiness(userId).catch(() => null);
+    if (b?.adminVerified && b?.adminPhone) {
+      try {
+        ownerJid = normalizeJid(b.adminPhone);
+      } catch {
+        /* try next */
+      }
+    }
+    if (!ownerJid && b?.phone) {
+      try {
+        ownerJid = normalizeJid(b.phone);
+      } catch {
+        /* try next */
+      }
+    }
+  } catch {
+    /* fall through to self-chat */
+  }
+  if (!ownerJid && selfJid) ownerJid = selfJid;
+  return ownerJid;
+}
+
 /** Repeat key scoping owner alerts per line (dedupe + dashboard feed). */
-export function outageRepeatKey(userId: string): string {
-  return `model-outage:${userId}`;
+export function alertRepeatKey(userId: string, kind: string): string {
+  return `${kind}:${userId}`;
 }
 
 export interface OutageAlert {
@@ -83,7 +109,7 @@ export async function reportModelOutage(alert: OutageAlert): Promise<string | nu
   try {
     const recent = await JobModel.findOne({
       userId,
-      repeatKey: outageRepeatKey(userId),
+      repeatKey: alertRepeatKey(userId, "model-outage"),
       createdAt: { $gte: new Date(Date.now() - 6 * 60 * 60_000) },
     })
       .select("_id")
@@ -93,27 +119,7 @@ export async function reportModelOutage(alert: OutageAlert): Promise<string | nu
     /* dedupe best-effort — still file the alert */
   }
   // Owner's private channel: verified admin line → shop phone → own chat.
-  let ownerJid = "";
-  try {
-    const b = await loadBusiness(userId).catch(() => null);
-    if (b?.adminVerified && b?.adminPhone) {
-      try {
-        ownerJid = normalizeJid(b.adminPhone);
-      } catch {
-        /* try next */
-      }
-    }
-    if (!ownerJid && b?.phone) {
-      try {
-        ownerJid = normalizeJid(b.phone);
-      } catch {
-        /* try next */
-      }
-    }
-  } catch {
-    /* fall through to self-chat */
-  }
-  if (!ownerJid && alert.selfJid) ownerJid = alert.selfJid;
+  const ownerJid = await resolveOwnerJid(userId, alert.selfJid);
   if (!ownerJid) {
     console.error(`[model-outage] line ${userId}: no owner channel, alert dropped (chat ${chatJid})`);
     return null;
@@ -138,7 +144,7 @@ export async function reportModelOutage(alert: OutageAlert): Promise<string | nu
       runAt: new Date(),
     });
     // Tag the chain so the dashboard feed + dedupe can find it.
-    await JobModel.updateOne({ _id: id }, { $set: { repeatKey: outageRepeatKey(userId) } }).catch(() => {});
+    await JobModel.updateOne({ _id: id }, { $set: { repeatKey: alertRepeatKey(userId, "model-outage") } }).catch(() => {});
     try {
       const m = await import("./task-queue.js");
       m.wake();
@@ -149,6 +155,66 @@ export async function reportModelOutage(alert: OutageAlert): Promise<string | nu
     return id;
   } catch (e) {
     console.error(`[model-outage] line ${userId}: could not file alert:`, e instanceof Error ? e.message : e);
+    return null;
+  }
+}
+
+/**
+ * Duplicate-client fight: another WhatsApp client keeps taking over this
+ * line (dev server + production running at once, or a second hosted copy).
+ * Each takeover looks like automation from WhatsApp's side and both sides
+ * burn reconnect storms — tell the owner once a day until it stops.
+ */
+export async function reportSessionConflict(userId: string, selfJid?: string | null): Promise<string | null> {
+  if (!userId) return null;
+  try {
+    await ensureMongo();
+  } catch {
+    return null;
+  }
+  try {
+    const recent = await JobModel.findOne({
+      userId,
+      repeatKey: alertRepeatKey(userId, "session-conflict"),
+      createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60_000) },
+    })
+      .select("_id")
+      .lean();
+    if (recent) return String((recent as { _id?: unknown })._id ?? "");
+  } catch {
+    /* dedupe best-effort */
+  }
+  const ownerJid = await resolveOwnerJid(userId, selfJid);
+  if (!ownerJid) {
+    console.error(`[session-conflict] line ${userId}: no owner channel, alert dropped`);
+    return null;
+  }
+  const text =
+    `[agent] \u26A0\uFE0F Two agents are fighting over this line \u2014 another WhatsApp client keeps taking over the connection ` +
+    `(often a dev server left running alongside production, or two hosted copies). ` +
+    `While they fight, replies stall and the number looks automated to WhatsApp \u2014 shut one copy down.`;
+  try {
+    const { enqueueTask } = await import("./task-queue.js");
+    const id = await enqueueTask({
+      userId,
+      chatJid: ownerJid,
+      createdBy: ownerJid,
+      createdByIsOwner: true,
+      kind: "send",
+      text: text.slice(0, 1000),
+      runAt: new Date(),
+    });
+    await JobModel.updateOne({ _id: id }, { $set: { repeatKey: alertRepeatKey(userId, "session-conflict") } }).catch(() => {});
+    try {
+      const m = await import("./task-queue.js");
+      m.wake();
+    } catch {
+      /* dispatcher re-arms on its own */
+    }
+    console.error(`[session-conflict] line ${userId}: alert filed (${id})`);
+    return id;
+  } catch (e) {
+    console.error(`[session-conflict] line ${userId}: could not file alert:`, e instanceof Error ? e.message : e);
     return null;
   }
 }

@@ -1,8 +1,9 @@
 import type { ToolDefinition } from "./tool-types.js";
 import { toolArgs } from "./tool-types.js";
-import { normalizeJid } from "./store.js";
+import { normalizeJid, lineAgeDays } from "./store.js";
 import { ensureMongo } from "../mongo.js";
-import { isChatAllowed } from "../chat-access.js";
+import { isChatAllowed, isWhitelisted } from "../chat-access.js";
+import { countMessages } from "../chat-memory.js";
 import { JobModel } from "./jobs.js";
 
 const MAX_RECIPIENTS = 50;
@@ -13,6 +14,11 @@ const DEFAULT_STAGGER_SEC = 45;
 // WhatsApp guideline guardrail: cap bulk sends per account per day (env-tunable).
 // Keeps a new/warm number far from spam thresholds; split bigger campaigns across days.
 export const DAILY_BULK_CAP = Math.max(1, Number(process.env.BROADCAST_DAILY_CAP ?? 250) || 250);
+// Warm-up: a freshly linked line blasts nothing big. Under 7 days old the
+// daily bulk cap drops to 50 — the #1 rookie ban pattern is a new number
+// going full-send on day one.
+const WARMUP_DAYS = 7;
+const WARMUP_DAILY_CAP = 50;
 const STOP_FOOTER = "\n\nReply STOP to opt out.";
 
 export interface StaggeredRecipient {
@@ -26,8 +32,12 @@ export interface StaggeredResult {
   queued: number;
   queuedJids: string[];
   skippedBlocked: number;
+  /** Cold numbers: never inbound, never whitelisted — dropped, not queued. */
+  skippedUnknown: number;
   deferredForCap: number;
   dailyCap: number;
+  /** True when the new-line warm-up cap (not the daily cap) applied. */
+  warmupCapped: boolean;
   staggerSec: number;
   firstAt: string;
   lastAt: string;
@@ -58,21 +68,29 @@ export async function queueStaggeredSends(opts: {
     kind: "send",
     createdAt: { $gte: dayStart },
   }).catch(() => 0);
+  // Warm-up cap for young lines (unknown age = mature — never throttle a
+  // live line because of a DB blip).
+  const age = await lineAgeDays(opts.userId).catch(() => null);
+  const warmup = age !== null && age < WARMUP_DAYS;
+  const cap = warmup ? Math.min(DAILY_BULK_CAP, WARMUP_DAILY_CAP) : DAILY_BULK_CAP;
   const empty: StaggeredResult = {
     queued: 0,
     queuedJids: [],
     skippedBlocked: 0,
+    skippedUnknown: 0,
     deferredForCap: opts.recipients.length,
-    dailyCap: DAILY_BULK_CAP,
+    dailyCap: cap,
+    warmupCapped: warmup,
     staggerSec,
     firstAt: new Date().toISOString(),
     lastAt: new Date().toISOString(),
   };
-  if (sentToday >= DAILY_BULK_CAP) return empty;
-  const room = Math.max(0, DAILY_BULK_CAP - sentToday);
+  if (sentToday >= cap) return empty;
+  const room = Math.max(0, cap - sentToday);
   const capped = opts.recipients.slice(0, room);
   const deferred = opts.recipients.length - capped.length;
   let skippedBlocked = 0;
+  let skippedUnknown = 0;
   const queuedJids: string[] = [];
   const now = Date.now();
   for (let i = 0; i < capped.length; i++) {
@@ -81,6 +99,18 @@ export async function queueStaggeredSends(opts: {
     if (!(await isChatAllowed(opts.userId, jid))) {
       skippedBlocked++;
       continue;
+    }
+    // No cold blasts, ever: a 1:1 number the line has never heard from and
+    // the owner never whitelisted is a stranger — messaging first is the
+    // most-reported path to restrictions. Groups pass (membership implies
+    // presence); the fix is one tap on the Link page or one inbound message.
+    const isGroup = jid.endsWith("@g.us");
+    if (!isGroup) {
+      const inbound = await countMessages(opts.userId, jid, "user", new Date(0)).catch(() => -1);
+      if (inbound === 0 && !(await isWhitelisted(opts.userId, jid).catch(() => false))) {
+        skippedUnknown++;
+        continue;
+      }
     }
     const body = /stop/i.test(text) ? text : `${text}${STOP_FOOTER}`;
     await JobModel.create({
@@ -112,8 +142,10 @@ export async function queueStaggeredSends(opts: {
     queued: queuedJids.length,
     queuedJids,
     skippedBlocked,
+    skippedUnknown,
     deferredForCap: deferred,
-    dailyCap: DAILY_BULK_CAP,
+    dailyCap: cap,
+    warmupCapped: warmup,
     staggerSec,
     firstAt,
     lastAt,
@@ -143,7 +175,7 @@ export const broadcastTools: ToolDefinition[] = [
           type: "array",
           items: { type: "string" },
           description:
-            "Explicit recipients: phone numbers or JIDs (1-50). Omit when audience='active'.",
+            "Explicit recipients: phone numbers or JIDs (1-50) who know the shop — anyone the line never heard from and you never whitelisted is skipped to protect the number. Omit when audience='active'.",
         },
         audience: {
           type: "string",
@@ -216,20 +248,28 @@ export const broadcastTools: ToolDefinition[] = [
         staggerSec,
       });
       if (res.queued === 0) {
+        if (res.skippedUnknown >= recipients.length) {
+          return {
+            error: `All ${recipients.length} recipient(s) never messaged this line and aren't whitelisted — cold first messages are the fastest route to a restriction. Ask them to message you first, or whitelist them on the Link page, then retry.`,
+            skippedUnknown: res.skippedUnknown,
+          };
+        }
         if (res.deferredForCap >= recipients.length) {
-          return { error: `Daily broadcast cap reached (${res.dailyCap}/day). Split the rest across days — this pacing keeps the number safe from bans.` };
+          return { error: `Daily broadcast cap reached (${res.dailyCap}/day${res.warmupCapped ? " — new-line warm-up cap" : ""}). Split the rest across days — this pacing keeps the number safe from bans.` };
         }
         return { error: `All ${recipients.length} recipient(s) are blocked — nothing queued.`, skippedBlocked: res.skippedBlocked };
       }
       return {
         queued: res.queued,
         skippedBlocked: res.skippedBlocked,
+        skippedUnknown: res.skippedUnknown,
         deferredForCap: res.deferredForCap,
         dailyCap: res.dailyCap,
+        ...(res.warmupCapped ? { warmupCapped: true as const } : {}),
         staggerSec: res.staggerSec,
         firstAt: res.firstAt,
         lastAt: res.lastAt,
-        note: `Staggered privately like a native broadcast — last delivery ${res.lastAt}. Track/cancel in list_scheduled.${res.deferredForCap > 0 ? ` ${res.deferredForCap} recipient(s) held for tomorrow by the daily cap.` : ""}`,
+        note: `Staggered privately like a native broadcast — last delivery ${res.lastAt}. Track/cancel in list_scheduled.${res.deferredForCap > 0 ? ` ${res.deferredForCap} recipient(s) held for tomorrow by the daily cap.` : ""}${res.skippedUnknown > 0 ? ` ${res.skippedUnknown} stranger(s) skipped (never messaged you — whitelist or wait for inbound first).` : ""}`,
       };
     },
   },
