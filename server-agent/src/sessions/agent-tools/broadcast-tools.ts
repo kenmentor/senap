@@ -32,8 +32,10 @@ export interface StaggeredResult {
   queued: number;
   queuedJids: string[];
   skippedBlocked: number;
-  /** Cold numbers: never inbound, never whitelisted — dropped, not queued. */
+  /** Cold numbers: never messaged you and never whitelisted — dropped, not queued. */
   skippedUnknown: number;
+  /** Garbage numbers that couldn't even be normalized to a JID (execute path only). */
+  skippedInvalid?: number;
   deferredForCap: number;
   dailyCap: number;
   /** True when the new-line warm-up cap (not the daily cap) applied. */
@@ -78,6 +80,7 @@ export async function queueStaggeredSends(opts: {
     queuedJids: [],
     skippedBlocked: 0,
     skippedUnknown: 0,
+    skippedInvalid: 0,
     deferredForCap: opts.recipients.length,
     dailyCap: cap,
     warmupCapped: warmup,
@@ -112,7 +115,7 @@ export async function queueStaggeredSends(opts: {
         continue;
       }
     }
-    const body = /stop/i.test(text) ? text : `${text}${STOP_FOOTER}`;
+    const body = /Reply STOP to opt out/i.test(text) ? text : `${text}${STOP_FOOTER}`;
     await JobModel.create({
       userId: opts.userId,
       chatJid: jid,
@@ -222,9 +225,11 @@ export const broadcastTools: ToolDefinition[] = [
         };
       }
 
-      // Normalize, dedupe, exclude self + status.
+      // Normalize, dedupe, exclude self + status. Unparseable entries are
+      // counted (not silently dropped) so the owner knows what didn't go.
       const selfJid = ctx.sock?.user?.id ?? "";
       const seen = new Set<string>();
+      let skippedInvalid = 0;
       const withTag = tag ? `[${tag}] ${text}` : text;
       const recipients: StaggeredRecipient[] = [];
       for (const r of raw) {
@@ -232,6 +237,7 @@ export const broadcastTools: ToolDefinition[] = [
         try {
           jid = normalizeJid(r);
         } catch {
+          skippedInvalid++;
           continue;
         }
         if (jid === selfJid || jid === "status@broadcast" || seen.has(jid)) continue;
@@ -239,7 +245,14 @@ export const broadcastTools: ToolDefinition[] = [
         recipients.push({ jid, text: withTag });
         if (recipients.length >= MAX_RECIPIENTS) break;
       }
-      if (recipients.length === 0) return { error: "No valid recipients after cleanup." };
+      if (recipients.length === 0) {
+        return {
+          error: skippedInvalid > 0
+            ? `${skippedInvalid} entr${skippedInvalid === 1 ? "y" : "ies"} couldn't be read as a phone number or contact — nothing valid to send to.`
+            : "No valid recipients after cleanup.",
+          ...(skippedInvalid > 0 ? { skippedInvalid } : {}),
+        };
+      }
 
       const res = await queueStaggeredSends({
         userId: ctx.userId,
@@ -263,13 +276,14 @@ export const broadcastTools: ToolDefinition[] = [
         queued: res.queued,
         skippedBlocked: res.skippedBlocked,
         skippedUnknown: res.skippedUnknown,
+        ...(skippedInvalid > 0 ? { skippedInvalid } : {}),
         deferredForCap: res.deferredForCap,
         dailyCap: res.dailyCap,
         ...(res.warmupCapped ? { warmupCapped: true as const } : {}),
         staggerSec: res.staggerSec,
         firstAt: res.firstAt,
         lastAt: res.lastAt,
-        note: `Staggered privately like a native broadcast — last delivery ${res.lastAt}. Track/cancel in list_scheduled.${res.deferredForCap > 0 ? ` ${res.deferredForCap} recipient(s) held for tomorrow by the daily cap.` : ""}${res.skippedUnknown > 0 ? ` ${res.skippedUnknown} stranger(s) skipped (never messaged you — whitelist or wait for inbound first).` : ""}`,
+        note: `Staggered privately like a native broadcast — last delivery ${res.lastAt}. Track/cancel in list_scheduled.${res.deferredForCap > 0 ? ` ${res.deferredForCap} recipient(s) held for tomorrow by the daily cap.` : ""}${res.skippedUnknown > 0 ? ` ${res.skippedUnknown} stranger(s) skipped (never messaged you — whitelist or wait for inbound first).` : ""}${skippedInvalid > 0 ? ` ${skippedInvalid} unreadable number(s) ignored.` : ""}`,
       };
     },
   },

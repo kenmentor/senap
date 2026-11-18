@@ -653,6 +653,9 @@ export function isOpenNow(
     minute: "2-digit",
     hour12: false,
   }).format(new Date());
+  // Overnight windows (e.g. open 20:00, close 02:00): active when past open
+  // OR before close, not between them.
+  if (close <= open) return open <= hm || hm <= close;
   return open <= hm && hm <= close;
 }
 

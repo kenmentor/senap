@@ -555,7 +555,11 @@ export default function LinkPage() {
         throw new Error(data.error ?? "Could not save the linked account (is MongoDB running?).");
       }
       const created: Account = await res.json();
-      setAccounts((v) => [...v, created]);
+      // Server is idempotent (returns the existing row on double-submit) —
+      // upsert locally instead of appending a duplicate card.
+      setAccounts((v) =>
+        v.some((x) => x.id === created.id) ? v.map((x) => (x.id === created.id ? created : x)) : [...v, created],
+      );
       const linkedId = engineIdOf(created) || id;
       closeSheet();
       // Right after linking: show THIS line's real contacts + groups with

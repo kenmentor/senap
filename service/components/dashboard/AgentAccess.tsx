@@ -130,7 +130,9 @@ export default function AgentAccess() {
       const res = await fetch(`/api/agent?userId=${encodeURIComponent(lineId)}`);
       if (!res.ok) throw new Error("offline");
       const c = await res.json();
-      if (Array.isArray(c.days) && c.days.length) setDays(c.days.filter((d: unknown) => typeof d === "string"));
+      // Always apply (even empty days = everything off) so the UI never
+      // shows stale switches after a save.
+      if (Array.isArray(c.days)) setDays(c.days.filter((d: unknown) => typeof d === "string"));
       if (typeof c.open === "string" && c.open) setOpen(c.open);
       if (typeof c.close === "string" && c.close) setClose(c.close);
       setControl(coerceControl(c.control));

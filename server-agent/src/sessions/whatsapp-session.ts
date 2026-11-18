@@ -2620,6 +2620,7 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
             quick = "Bye for now! I'm here whenever you need anything. 👋";
           }
           try {
+            this.touch(remoteJid);
             try {
               await sock.readMessages([{ ...key, fromMe: false }]);
             } catch {

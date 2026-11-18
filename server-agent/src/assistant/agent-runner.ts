@@ -541,7 +541,7 @@ async function ensurePhotosDelivered(
     }
     if (photos.length >= 5) break;
   }
-  if (photos.length === 0) return stripImageUrls(reply);
+  if (photos.length === 0) return stripImageUrls(reply, delivered);
 
   let cleaned = reply;
   for (const p of photos) {
@@ -565,21 +565,32 @@ async function ensurePhotosDelivered(
       console.error("Photo auto-delivery failed:", e);
     }
   }
-  return stripImageUrls(cleaned || reply);
+  return stripImageUrls(cleaned || reply, delivered);
 }
 
 /**
- * Last line of defense: an image URL must NEVER reach chat as text — photos
- * travel as images, never as links. Strips image-looking URLs (file
- * extensions, /products/ paths) while leaving real links (payment, maps,
- * product pages) untouched. Only tidies dangling connectors when something
- * was actually stripped.
+ * Last line of defense: a media URL must NEVER reach chat as text — photos
+ * and videos travel as media, never as links. Strips image/video-looking
+ * URLs (file extensions, /products/ paths, Cloudinary upload paths) plus
+ * any URL already delivered via send_media this turn, while leaving real
+ * links (payment, maps, product pages) untouched. Only tidies dangling
+ * connectors when something was actually stripped.
  */
-function stripImageUrls(text: string): string {
+function stripImageUrls(text: string, delivered?: Set<string>): string {
   const before = text;
   let out = text;
-  out = out.replace(/https?:\/\/[^\s"'<>\]\)]+?\.(?:jpg|jpeg|png|webp|gif|mp4)(?:\?[^\s"'<>\]\)]*)?/gi, "");
+  out = out.replace(/https?:\/\/[^\s"'<>\]\)]+?\.(?:jpg|jpeg|png|webp|gif|mp4|webm|mov|m4v)(?:\?[^\s"'<>\]\)]*)?/gi, "");
   out = out.replace(/https?:\/\/[^\s"'<>\]\)]*\/products\/[^\s"'<>\]\)]*/gi, "");
+  out = out.replace(/https?:\/\/res\.cloudinary\.com\/[^\s"'<>\]\)]*\/(image|video)\/upload\/[^\s"'<>\]\)]*/gi, "");
+  if (delivered) {
+    for (const u of delivered) {
+      const raw = u.trim();
+      if (!raw || !/^https?:\/\//i.test(raw)) continue;
+      const clean = raw.replace(/[)!.,;:]+$/, "");
+      if (out.includes(raw)) out = out.split(raw).join("");
+      else if (clean !== raw && out.includes(clean)) out = out.split(clean).join("");
+    }
+  }
   out = out
     .replace(/\[\s*\]\(\)/g, "")
     .replace(/[ \t]{2,}/g, " ")
