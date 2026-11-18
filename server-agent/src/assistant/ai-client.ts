@@ -97,6 +97,8 @@ function buildProviders(modelOverride?: string): Provider[] {
   return out;
 }
 
+let bootLogged = false;
+
 export default class AiClient {
   ai: any;
   model_name: string;
@@ -108,6 +110,12 @@ export default class AiClient {
     const primary = providers[0];
     this.ai = primary?.client ?? null;
     this.model_name = primary?.model ?? model_name ?? CF_DEFAULT_MODEL;
+    // One-time boot line so a missing GROQ_API_KEY on the server is obvious
+    // in the logs (labels carry key suffixes only, never keys).
+    if (!bootLogged) {
+      bootLogged = true;
+      console.log(`Model providers: ${providers.map((p) => p.label).join(" → ") || "NONE — set GROQ_API_KEY"}`);
+    }
   }
 
   /** Which providers are configured, in try order (key suffixes only, never keys). */
@@ -145,6 +153,9 @@ export default class AiClient {
     const now = Date.now();
     const fresh = providers.filter((p) => (cooldownUntil.get(p.id) ?? 0) <= now);
     const order = fresh.length > 0 ? fresh : providers;
+    // Report the PRIMARY failure, not the last one: the fallback's error
+    // (usually Cloudflare quota) otherwise masks what actually went wrong.
+    let firstError: unknown = null;
     let lastError: unknown = null;
     for (const p of order) {
       try {
@@ -175,6 +186,7 @@ export default class AiClient {
           provider: p.label,
         };
       } catch (e) {
+        if (firstError === null) firstError = e;
         lastError = e;
         cooldownUntil.set(p.id, now + (isQuotaError(e) ? QUOTA_COOLDOWN_MS : ERROR_COOLDOWN_MS));
         console.error(
@@ -183,6 +195,6 @@ export default class AiClient {
         );
       }
     }
-    throw lastError instanceof Error ? lastError : new Error("All model providers failed.");
+    throw firstError instanceof Error ? firstError : lastError instanceof Error ? lastError : new Error("All model providers failed.");
   }
 }
