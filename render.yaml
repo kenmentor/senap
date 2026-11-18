@@ -43,7 +43,7 @@ services:
       - key: GROQ_API_KEY
         sync: false # primary model; Cloudflare is the fallback
       - key: GROQ_MODEL
-        value: "openai/gpt-oss-120b"
+        value: "openai/gpt-oss-20b"
       - key: CLOUDINARY_URL
         sync: false # cloudinary://<api_key>:<api_secret>@<cloud_name> — product media from status posts
       - key: WA_LOG_LEVEL

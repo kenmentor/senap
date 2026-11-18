@@ -392,8 +392,18 @@ export async function handleCustomerMessage(
   let outage: unknown = null;
   let stepsUsed = 0;
   let lastFinish = "";
+  // Hard ceiling per message: one stuck run must never wedge its chat for
+  // minutes (per-chat serialization means everything behind it waits).
+  // Past the deadline the loop stops and the honest fallback below answers.
+  const RUN_DEADLINE_MS = 55_000;
+  const runStarted = Date.now();
 
   for (let step = 0; step < MAX_STEPS; step++) {
+    if (Date.now() - runStarted > RUN_DEADLINE_MS) {
+      lastFinish = "deadline";
+      console.error(`Assistant run hit ${RUN_DEADLINE_MS}ms deadline for chat ${req.customerJid} — answering fallback.`);
+      break;
+    }
     let res: Awaited<ReturnType<AiClient["chat"]>>;
     try {
       res = await client.chat(messages, tools);

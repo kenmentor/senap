@@ -4,7 +4,10 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
-const GROQ_DEFAULT_MODEL = "openai/gpt-oss-120b";
+// Default to the fast model — replies in ~1s instead of 5s+. The bigger
+// 120b reasons better but keeps customers waiting; switch via GROQ_MODEL
+// (or per-call model_name) when depth matters more than speed.
+const GROQ_DEFAULT_MODEL = "openai/gpt-oss-20b";
 const CF_DEFAULT_MODEL = "@cf/zai-org/glm-4.7-flash";
 
 // Groq sits behind Cloudflare WAF (error 1010) which blocks non-browser
