@@ -1214,7 +1214,10 @@ export default function LinkPage() {
 
             <div className="mt-3 min-h-0 flex-1 overflow-y-auto">
               {freshLoading ? (
-                <p className="py-6 text-center text-[12.5px]" style={{ color: "#636c73" }}>Loading contacts…</p>
+                <div className="flex flex-col items-center gap-2.5 py-8" role="status" aria-label="Loading contacts">
+                  <RefreshCw size={26} className="animate-spin" style={{ color: "#00a884" }} />
+                  <p className="text-center text-[12.5px]" style={{ color: "#8a949b" }}>Loading contacts…</p>
+                </div>
               ) : freshAgentDown ? (
                 <p className="rounded-xl p-3 text-[12px]" style={{ background: "rgba(230,106,106,0.08)", color: "#e66a6a", border: "1px solid rgba(230,106,106,0.3)" }}>
                   Agent is offline — the roster will appear here once it&apos;s back on :3001. Your mode choice above is already saved.
