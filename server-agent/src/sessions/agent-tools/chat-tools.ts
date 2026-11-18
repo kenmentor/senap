@@ -397,14 +397,39 @@ export const chatTools: ToolDefinition[] = [
         return { error: "Only photos can be batched — send video/audio/documents one at a time." };
       }
       if (!ctx.sock) return { error: "WhatsApp is not connected." };
+      // Fail fast on giant files: Baileys downloads the URL at send time
+      // with no cap of its own — a 100MB video would eat the whole 12s tool
+      // budget and trigger model retries. HEAD pre-check, best-effort.
+      const MAX_SEND_BYTES = 32 * 1024 * 1024;
+      const tooBig: string[] = [];
+      await Promise.all(
+        urls.map(async (u) => {
+          if (buffers.has(u)) return;
+          try {
+            const head = await fetch(u, { method: "HEAD", signal: AbortSignal.timeout(8000) });
+            const n = Number(head.headers.get("content-length") ?? 0);
+            if (Number.isFinite(n) && n > MAX_SEND_BYTES) tooBig.push(u);
+          } catch {
+            /* HEAD blocked — let the send itself decide */
+          }
+        }),
+      );
+      const sendable = urls.filter((u) => !tooBig.includes(u));
+      if (sendable.length === 0 && tooBig.length > 0) {
+        return {
+          error:
+            "That file is too big to send over WhatsApp chat (over ~32MB) — it would stall the reply. " +
+            "Share a smaller version, or a Cloudinary link the customer can open instead. NEVER paste the raw URL as a text link.",
+        };
+      }
       const captions = toolArgs.asStringArray(args.captions);
       const firstCaption = toolArgs.asString(args.caption) || undefined;
       const sent: string[] = [];
       const failed: { url: string; error: string }[] = [];
       // Rapid back-to-back sends group visually like a native album on the
       // recipient's phone (upstream Baileys has no single-message album API).
-      for (let i = 0; i < urls.length; i++) {
-        const url = urls[i];
+      for (let i = 0; i < sendable.length; i++) {
+        const url = sendable[i];
         const caption = captions[i]?.trim() || (i === 0 ? firstCaption : undefined);
         const buf = buffers.get(url);
         try {
@@ -450,7 +475,17 @@ export const chatTools: ToolDefinition[] = [
         url: sent[0],
         urls: sent,
         count: sent.length,
-        ...(failed.length > 0 ? { failed, note: "Some photos failed — quote those in words, never paste their URLs." } : {}),
+        ...(failed.length > 0 || tooBig.length > 0
+          ? {
+              ...(failed.length > 0 ? { failed } : {}),
+              note: [
+                failed.length > 0 ? "Some photos failed — quote those in words, never paste their URLs." : "",
+                tooBig.length > 0 ? `${tooBig.length} file(s) skipped (over ~32MB — too big for chat send).` : "",
+              ]
+                .filter(Boolean)
+                .join(" "),
+            }
+          : {}),
       };
     },
   },

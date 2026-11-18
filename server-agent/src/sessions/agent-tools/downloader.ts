@@ -81,13 +81,24 @@ export const downloaderTools: ToolDefinition[] = [
       } catch (e) {
         return { error: e instanceof Error ? e.message : "Refused URL." };
       }
+      // Fail fast: a slow drip must never eat the whole 12s tool budget and
+      // trigger model retries. 10s fetch cap + refuse giant files up front.
       let res: Response;
       try {
-        res = await fetch(url);
+        res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
       } catch (e) {
         return { error: `Download failed: ${e instanceof Error ? e.message : String(e)}` };
       }
       if (!res.ok) return { error: `Download failed with status ${res.status}.` };
+      const known = Number(res.headers.get("content-length") ?? 0);
+      if (Number.isFinite(known) && known > MAX_BYTES) {
+        try {
+          await res.body?.cancel();
+        } catch {
+          /* best effort */
+        }
+        return { error: "File is larger than 20MB, refused." };
+      }
       const buffer = Buffer.from(await res.arrayBuffer());
       if (buffer.length === 0) return { error: "Downloaded file is empty." };
       if (buffer.length > MAX_BYTES) return { error: "File is larger than 20MB, refused." };

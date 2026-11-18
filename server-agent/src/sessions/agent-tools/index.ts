@@ -1,6 +1,6 @@
 import type OpenAI from "openai";
 import type { ToolContext, ToolDefinition } from "./tool-types.js";
-import { TOOL_TIMEOUT_MS } from "./tool-types.js";
+import { TOOL_TIMEOUT_MS, toolArgs } from "./tool-types.js";
 import { logToolUse } from "../tool-usage.js";
 import { timeTools } from "./time-tools.js";
 import { productTools } from "./product.js";
@@ -75,6 +75,32 @@ function timeoutAfter<T>(promise: Promise<T>, ms: number, name: string): Promise
 }
 
 /**
+ * One-line "on it" acknowledgements — ONLY for heavy, infrequent tools that
+ * genuinely take seconds (big downloads, broadcasts, campaigns, status
+ * posts, non-photo media). Everyday tools stay silent and fast; spamming
+ * "hold on" for everything is banned. Each line fires at most once per
+ * agent run (retries don't re-announce).
+ */
+function heavyAck(name: string, args: Record<string, unknown>): string | null {
+  switch (name) {
+    case "download_file":
+      return "On it — pulling that file now, one sec…";
+    case "send_broadcast":
+      return "On it — lining up that broadcast, sending in the background…";
+    case "execute_campaign":
+      return "On it — kicking off that campaign now…";
+    case "post_status":
+      return "Posting that to your status now…";
+    case "send_media": {
+      const kind = toolArgs.asString((args as Record<string, unknown>).kind, "image");
+      return kind === "image" ? null : "Sending that over now — big files take a moment…";
+    }
+    default:
+      return null;
+  }
+}
+
+/**
  * Hard isolation gate. Owner-only tools are rejected here in code — the model
  * cannot talk its way around it, and customers can never reach another
  * customer's chats, contacts, or reminders through any tool.
@@ -102,10 +128,28 @@ export async function executeTool(
   if (deniedByScope(tool, ctx, args)) {
     return { error: `"${name}" is restricted: only the shop owner can use it.` };
   }
+  // Heavy-tool acknowledgement (once per run): the customer sees "on it"
+  // while a genuinely slow job works. Never blocks the tool on failure.
+  try {
+    const seen = ((ctx as unknown as { __ackedTools?: Set<string> }).__ackedTools ??= new Set<string>());
+    if (!seen.has(name)) {
+      const ack = heavyAck(name, args);
+      if (ack) {
+        seen.add(name);
+        await ctx.sendText(ctx.customerJid, ack).catch(() => {});
+      }
+    }
+  } catch {
+    /* acknowledgement is cosmetic */
+  }
   logToolUse(ctx.userId, name);
+  const started = Date.now();
   try {
     return await timeoutAfter(tool.execute(args, ctx), TOOL_TIMEOUT_MS, name);
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
+  } finally {
+    const ms = Date.now() - started;
+    if (ms > 3000) console.log(`Tool "${name}" took ${ms}ms (over 3s — watch for stalls).`);
   }
 }
