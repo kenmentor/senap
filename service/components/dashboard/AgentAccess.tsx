@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Bot, Clock3 } from "lucide-react";
+import { Bot, Clock3, Power, User, Users, Smartphone, Store } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 
@@ -36,7 +37,7 @@ function coerceControl(raw: unknown): Control {
   };
 }
 
-function Switch({ on, onFlip, disabled, label }: { on: boolean; onFlip: () => void; disabled?: boolean; label: string }) {
+function Toggle({ on, onFlip, disabled, label }: { on: boolean; onFlip: () => void; disabled?: boolean; label: string }) {
   return (
     <button
       onClick={onFlip}
@@ -52,6 +53,46 @@ function Switch({ on, onFlip, disabled, label }: { on: boolean; onFlip: () => vo
   );
 }
 
+function Row({
+  icon: Icon,
+  title,
+  sub,
+  on,
+  onFlip,
+  disabled,
+  indented,
+}: {
+  icon: LucideIcon;
+  title: string;
+  sub: string;
+  on: boolean;
+  onFlip: () => void;
+  disabled?: boolean;
+  indented?: boolean;
+}) {
+  return (
+    <div
+      className="flex items-center gap-3 rounded-2xl px-3.5 py-3"
+      style={
+        indented
+          ? { background: "rgba(255,255,255,0.03)", borderLeft: "2px solid rgba(0,168,132,0.5)" }
+          : { background: "rgba(255,255,255,0.03)" }
+      }
+    >
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl" style={{ background: on ? "rgba(0,168,132,0.14)" : "rgba(255,255,255,0.05)", color: on ? "#00d19f" : "#636c73" }}>
+        <Icon size={17} strokeWidth={2} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[13.5px] font-semibold leading-snug" style={{ color: "#e9edef" }}>{title}</span>
+        <span className="block truncate text-[12px]" style={{ color: "#8a949b" }}>{sub}</span>
+      </span>
+      <Toggle on={on} onFlip={onFlip} disabled={disabled} label={title} />
+    </div>
+  );
+}
+
+const LABEL = { color: "#8a949b", fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase" as const };
+
 export default function AgentAccess() {
   const [lines, setLines] = useState<{ id: string; number: string; engineId?: string }[]>([]);
   const [line, setLine] = useState("");
@@ -63,7 +104,6 @@ export default function AgentAccess() {
   const [saving, setSaving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Lines for the picker.
   useEffect(() => {
     (async () => {
       try {
@@ -79,7 +119,6 @@ export default function AgentAccess() {
     })();
   }, []);
 
-  // This line's schedule + switches.
   const load = useCallback(async (lineId: string) => {
     if (!lineId) {
       setLoading(false);
@@ -96,7 +135,7 @@ export default function AgentAccess() {
       if (typeof c.close === "string" && c.close) setClose(c.close);
       setControl(coerceControl(c.control));
     } catch {
-      setError("Couldn't load this line's settings — is MongoDB running?");
+      setError("Couldn't load this line — check your connection and retry.");
     } finally {
       setLoading(false);
     }
@@ -106,8 +145,7 @@ export default function AgentAccess() {
     load(line);
   }, [line, load]);
 
-  /** One PUT per change; the key locks its own switch until saved. */
-  const save = async (key: string, patch: Record<string, unknown>) => {
+  const save = async (key: string, patch: Record<string, unknown>, controlPatch?: Partial<Control>) => {
     if (!line || saving) return;
     setSaving(key);
     setError(null);
@@ -119,7 +157,8 @@ export default function AgentAccess() {
       });
       if (!res.ok) throw new Error("save failed");
     } catch {
-      setError("Couldn't save — retry. It will still be off in the meantime.");
+      setError("Couldn't save — check your connection. It stays off until saved.");
+      if (controlPatch) setControl((v) => ({ ...v, ...controlPatch }));
       load(line);
     } finally {
       setSaving(null);
@@ -133,27 +172,32 @@ export default function AgentAccess() {
   };
 
   const flipControl = (k: keyof Control) => {
-    const next = { ...control, [k]: !control[k] };
-    setControl(next);
-    void save(`ctl-${k}`, { control: { [k]: next[k] } });
+    const prev = control[k];
+    setControl((v) => ({ ...v, [k]: !v[k] }));
+    // Pass the revert value so a failed save rolls the switch back.
+    void save(`ctl-${k}`, { control: { [k]: !prev } }, { [k]: prev } as Partial<Control>);
   };
 
   const master = control.readMessages && !control.paused;
 
   return (
-    <div className="rounded-2xl p-4 sm:p-6" style={{ border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.025)" }}>
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="flex items-center gap-2 text-[15px] font-semibold" style={{ color: "#e9edef" }}>
-          <Bot size={16} style={{ color: "#00a884" }} /> Agent access
-        </h2>
-        <span className="flex items-center gap-1.5 text-[12px] font-semibold" style={{ color: master ? "#00d19f" : "#8a949b" }}>
+    <section className="rounded-3xl p-5 sm:p-6" style={{ background: "#10161b", border: "1px solid rgba(255,255,255,0.09)" }}>
+      <header className="flex items-center gap-3">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl" style={{ background: "#00a884", color: "#04241d" }}>
+          <Bot size={20} strokeWidth={2.25} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-[16px] font-bold leading-tight" style={{ color: "#fff" }}>Agent access</span>
+          <span className="block text-[12px]" style={{ color: "#8a949b" }}>When she works, and what she may touch</span>
+        </span>
+        <span className="flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-[11.5px] font-bold" style={{ background: master ? "rgba(0,168,132,0.14)" : "rgba(255,255,255,0.06)", color: master ? "#00d19f" : "#8a949b" }}>
           <span className="h-1.5 w-1.5 rounded-full" style={{ background: master ? "#00a884" : "#636c73" }} />
           {master ? "On duty" : "Paused"}
         </span>
-      </div>
+      </header>
 
       {lines.length > 1 && (
-        <div className="mt-3 flex flex-wrap gap-2">
+        <div className="mt-4 flex flex-wrap gap-2">
           {lines.map((a) => {
             const id = a.engineId ?? a.number;
             const active = id === line;
@@ -161,8 +205,8 @@ export default function AgentAccess() {
               <button
                 key={a.id}
                 onClick={() => setLine(id)}
-                className="rounded-full px-4 py-2 text-[12.5px] font-semibold transition disabled:opacity-50"
                 disabled={!!saving}
+                className="rounded-full px-4 py-2 text-[12.5px] font-semibold transition disabled:opacity-50"
                 style={active ? { background: "#00a884", color: "#04241d" } : { background: "rgba(255,255,255,0.05)", color: "#8a949b" }}
               >
                 {a.number}
@@ -173,12 +217,15 @@ export default function AgentAccess() {
       )}
 
       {loading ? (
-        <div className="mt-4 h-24 animate-pulse rounded-xl" style={{ background: "rgba(255,255,255,0.05)" }} />
+        <div className="mt-4 space-y-2.5">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="h-14 animate-pulse rounded-2xl" style={{ background: "rgba(255,255,255,0.05)" }} />
+          ))}
+        </div>
       ) : (
         <>
-          {/* Active days */}
-          <p className="mt-4 text-[12px] font-semibold" style={{ color: "#8a949b" }}>Active days</p>
-          <div className="mt-2 flex flex-wrap gap-2">
+          <p className="mt-5" style={LABEL}>Active days</p>
+          <div className="mt-2 grid grid-cols-7 gap-1.5">
             {DAYS.map((d) => {
               const on = days.includes(d);
               return (
@@ -187,107 +234,70 @@ export default function AgentAccess() {
                   onClick={() => flipDay(d)}
                   disabled={!!saving}
                   aria-pressed={on}
-                  className="h-10 w-12 rounded-xl text-[13px] font-semibold transition disabled:opacity-50"
-                  style={on ? { background: "#00a884", color: "#04241d" } : { background: "rgba(255,255,255,0.05)", color: "#8a949b", border: "1px solid rgba(255,255,255,0.09)" }}
+                  title={d}
+                  className="h-10 rounded-xl text-[12px] font-bold transition disabled:opacity-50"
+                  style={on ? { background: "#00a884", color: "#04241d" } : { background: "rgba(255,255,255,0.05)", color: "#8a949b" }}
                 >
-                  {d}
+                  {d.slice(0, 1)}
                 </button>
               );
             })}
           </div>
 
-          {/* Active time */}
-          <p className="mt-4 flex items-center gap-1.5 text-[12px] font-semibold" style={{ color: "#8a949b" }}>
-            <Clock3 size={13} /> Active time
+          <p className="mt-5 flex items-center gap-1.5" style={LABEL}>
+            <Clock3 size={12} /> Active time
           </p>
-          <div className="mt-2 flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-2 text-[13px]" style={{ color: "#8a949b" }}>
-              From
-              <input
-                type="time"
-                value={open}
-                disabled={!!saving}
-                onChange={(e) => {
-                  setOpen(e.target.value);
-                  void save("open", { open: e.target.value });
-                }}
-                className="rounded-xl px-3 py-2 text-[13px] outline-none disabled:opacity-50"
-                style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.09)", color: "#e9edef", colorScheme: "dark" }}
-              />
-            </label>
-            <label className="flex items-center gap-2 text-[13px]" style={{ color: "#8a949b" }}>
-              To
-              <input
-                type="time"
-                value={close}
-                disabled={!!saving}
-                onChange={(e) => {
-                  setClose(e.target.value);
-                  void save("close", { close: e.target.value });
-                }}
-                className="rounded-xl px-3 py-2 text-[13px] outline-none disabled:opacity-50"
-                style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.09)", color: "#e9edef", colorScheme: "dark" }}
-              />
-            </label>
+          <div className="mt-2 flex items-center gap-2.5">
+            <input
+              type="time"
+              value={open}
+              disabled={!!saving}
+              onChange={(e) => {
+                setOpen(e.target.value);
+                void save("open", { open: e.target.value });
+              }}
+              aria-label="Active from"
+              className="h-11 min-w-0 flex-1 rounded-xl px-3 text-center text-[14px] font-semibold outline-none disabled:opacity-50"
+              style={{ background: "rgba(255,255,255,0.05)", color: "#e9edef", colorScheme: "dark" }}
+            />
+            <span style={{ color: "#636c73" }}>→</span>
+            <input
+              type="time"
+              value={close}
+              disabled={!!saving}
+              onChange={(e) => {
+                setClose(e.target.value);
+                void save("close", { close: e.target.value });
+              }}
+              aria-label="Active until"
+              className="h-11 min-w-0 flex-1 rounded-xl px-3 text-center text-[14px] font-semibold outline-none disabled:opacity-50"
+              style={{ background: "rgba(255,255,255,0.05)", color: "#e9edef", colorScheme: "dark" }}
+            />
           </div>
 
-          {/* Access level */}
-          <div className="mt-5" style={{ borderTop: "1px solid rgba(255,255,255,0.07)", paddingTop: 16 }}>
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-[13.5px] font-semibold" style={{ color: "#e9edef" }}>Read & reply to messages</p>
-                <p className="mt-0.5 text-[12px]" style={{ color: "#636c73" }}>Master switch — off means total silence to customers</p>
-              </div>
-              <Switch on={master} onFlip={() => flipControl("readMessages")} disabled={!!saving} label="Read and reply to messages" />
-            </div>
+          <p className="mt-5" style={LABEL}>Access level</p>
+          <div className="mt-2 flex flex-col gap-2">
+            <Row icon={Power} title="Read & reply" sub={master ? "She answers customers" : "Total silence to customers"} on={master} onFlip={() => flipControl("readMessages")} disabled={!!saving} />
             {master && (
-              <div className="mt-3 flex flex-col gap-2.5 pl-1">
-                {(
-                  [
-                    ["replyDM", "1:1 chats", "Private customer conversations"],
-                    ["replyGroups", "Groups", "Group chats this line is in"],
-                  ] as const
-                ).map(([k, label, sub]) => (
-                  <div key={k} className="flex items-center justify-between gap-3 rounded-xl px-3 py-2" style={{ background: "rgba(255,255,255,0.03)" }}>
-                    <div>
-                      <p className="text-[13px] font-semibold" style={{ color: "#e9edef" }}>{label}</p>
-                      <p className="text-[11.5px]" style={{ color: "#636c73" }}>{sub}</p>
-                    </div>
-                    <Switch on={control[k]} onFlip={() => flipControl(k)} disabled={!!saving} label={label} />
-                  </div>
-                ))}
-              </div>
+              <>
+                <Row icon={User} title="1:1 chats" sub="Private conversations" on={control.replyDM} onFlip={() => flipControl("replyDM")} disabled={!!saving} indented />
+                <Row icon={Users} title="Groups" sub="Group chats this line is in" on={control.replyGroups} onFlip={() => flipControl("replyGroups")} disabled={!!saving} indented />
+              </>
             )}
-          </div>
-
-          {/* Status + catalog */}
-          <div className="mt-3 flex flex-col gap-2.5">
-            {(
-              [
-                ["statusImport", "Status access", "Turn phone statuses into store products"],
-                ["catalogMirror", "Post to catalog", "Mirror new products to the WA Business catalog"],
-              ] as const
-            ).map(([k, label, sub]) => (
-              <div key={k} className="flex items-center justify-between gap-3 rounded-xl px-3 py-2.5" style={{ background: "rgba(255,255,255,0.03)" }}>
-                <div>
-                  <p className="text-[13px] font-semibold" style={{ color: "#e9edef" }}>{label}</p>
-                  <p className="text-[11.5px]" style={{ color: "#636c73" }}>{sub}</p>
-                </div>
-                <Switch on={control[k]} onFlip={() => flipControl(k)} disabled={!!saving} label={label} />
-              </div>
-            ))}
+            <Row icon={Smartphone} title="Status to store" sub="Statuses become products" on={control.statusImport} onFlip={() => flipControl("statusImport")} disabled={!!saving} />
+            <Row icon={Store} title="Post to catalog" sub="Mirror to WA Business catalog" on={control.catalogMirror} onFlip={() => flipControl("catalogMirror")} disabled={!!saving} />
           </div>
 
           {error && (
-            <p className="mt-3 rounded-lg px-3 py-2 text-[12.5px]" style={{ background: "rgba(230,106,106,0.1)", color: "#e66a6a" }}>
+            <p className="mt-3 rounded-xl px-3.5 py-2.5 text-[12.5px] font-medium" style={{ background: "rgba(230,106,106,0.1)", color: "#e66a6a" }}>
               {error}
             </p>
           )}
-          <p className="mt-3 text-[11.5px]" style={{ color: "#636c73" }}>
-            Changes take effect within a minute{saving ? " · saving…" : ""}
+          <p className="mt-3 text-[11.5px] leading-relaxed" style={{ color: "#636c73" }}>
+            Outside active days and time she stays silent — your own messages still work. Changes apply within a minute{saving ? " · saving…" : ""}.
           </p>
         </>
       )}
-    </div>
+    </section>
   );
 }

@@ -32,6 +32,12 @@ export interface SettingsDoc extends Document {
   adminVerifiedAt?: Date;
   adminOtpHash: string;
   adminOtpExpires?: Date;
+  /** Product → status flow (Products page Status section). */
+  statusFlow: {
+    lineId: string;
+    includePrice: boolean;
+    postingEnabled: boolean;
+  };
 }
 
 const SettingsSchema = new Schema<SettingsDoc>(
@@ -68,7 +74,15 @@ const SettingsSchema = new Schema<SettingsDoc>(
     adminVerified: { type: Boolean, default: false },
     adminVerifiedAt: { type: Date },
     adminOtpHash: { type: String, default: "", select: false },
-    adminOtpExpires: { type: Date }
+    adminOtpExpires: { type: Date },
+    statusFlow: {
+      type: {
+        lineId: String,
+        includePrice: Boolean,
+        postingEnabled: Boolean,
+      },
+      default: undefined,
+    },
   },
   { versionKey: false }
 );

@@ -19,6 +19,8 @@ export interface ProductDoc extends Document {
   image: string;
   sold: number;
   updatedAt: number;
+  /** Last time this product was pushed to WhatsApp status (0 = never). */
+  lastStatusPostAt: number;
 }
 
 const ProductSchema = new Schema<ProductDoc>(
@@ -35,7 +37,8 @@ const ProductSchema = new Schema<ProductDoc>(
     description: { type: String, default: "" },
     image: { type: String, default: "" },
     sold: { type: Number, default: 0, min: 0 },
-    updatedAt: { type: Number, default: () => Date.now() }
+    updatedAt: { type: Number, default: () => Date.now() },
+    lastStatusPostAt: { type: Number, default: 0 }
   },
   { timestamps: false, versionKey: false }
 );

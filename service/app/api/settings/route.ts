@@ -79,6 +79,17 @@ export async function PUT(req: Request) {
       }
     }
     if (typeof b.reportAccountId === "string") patch.reportAccountId = b.reportAccountId.trim().slice(0, 120);
+    if (b.statusFlow && typeof b.statusFlow === "object") {
+      const s = b.statusFlow as Record<string, unknown>;
+      const clean: Record<string, unknown> = {};
+      if (typeof s.lineId === "string") clean.lineId = s.lineId.trim().slice(0, 120);
+      if (typeof s.includePrice === "boolean") clean.includePrice = s.includePrice;
+      if (typeof s.postingEnabled === "boolean") clean.postingEnabled = s.postingEnabled;
+      if (Object.keys(clean).length > 0) {
+        const existing = await Settings.findOne({ ownerId: me.id }).select("statusFlow").lean();
+        patch.statusFlow = { ...((existing?.statusFlow as Record<string, unknown> | undefined) ?? {}), ...clean };
+      }
+    }
     // Key tracks the owner so every owner's doc stays unique under the key index.
     const doc = await Settings.findOneAndUpdate({ ownerId: me.id }, { $set: { ...patch, key: me.id, ownerId: me.id } }, { new: true, upsert: true }).lean();
     const { adminOtpHash: _omit, ...safe } = doc as unknown as Record<string, unknown>;
