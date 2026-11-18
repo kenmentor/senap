@@ -287,6 +287,11 @@ export default function LinkPage() {
   /** engineId being relinked (null = linking a brand-new number). */
   const [relinkTarget, setRelinkTarget] = useState<string | null>(null);
   const pollRef = useRef<number | null>(null);
+  /** When the shown pairing code was issued + which digits it was issued for. */
+  const codeAtRef = useRef<number>(0);
+  const pairDigitsRef = useRef<string>("");
+  const refreshingRef = useRef<boolean>(false);
+  const [codeRefreshing, setCodeRefreshing] = useState(false);
   /** True when THIS sheet opening started the session (so closing an
       unfinished link stops the orphan instead of leaking a live socket). */
   const startedHereRef = useRef(false);
@@ -500,9 +505,12 @@ export default function LinkPage() {
     setPhase("idle");
     setQr(null);
     setError(null);
-    setLinkMode("qr");
+    setLinkMode(isMobileDevice() ? "code" : "qr");
     setPhone("");
     setPairCode(null);
+    pairDigitsRef.current = "";
+    codeAtRef.current = 0;
+    setCodeRefreshing(false);
     setPairError(null);
     setCopied(false);
     setActionError(null);
@@ -512,10 +520,61 @@ export default function LinkPage() {
     }
   };
 
+  /** One pairing-code request. Throws with a readable message. */
+  const fetchPairCode = async (id: string, digits: string): Promise<string> => {
+    const res = await fetch(`/api/agent/sessions/${encodeURIComponent(id)}/pairing-code`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phoneNumber: digits }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (res.status === 401) {
+        stopPolling();
+        router.push("/signin?next=/dashboard/link");
+        throw new Error("Session expired — sign in again.");
+      }
+      throw new Error(data.error ?? `Code request failed (${res.status})`);
+    }
+    if (data.connected) {
+      setPhase("connected");
+      stopPolling();
+      return "";
+    }
+    if (!data.pairingCode) throw new Error("WhatsApp didn't return a code — try again.");
+    return data.pairingCode as string;
+  };
+
   /** Watch a starting session until WhatsApp confirms the link (code mode). */
   const pollForConnection = (id: string) => {
     stopPolling();
     pollRef.current = window.setInterval(async () => {
+      // Pairing codes die after ~a minute: silently swap in a fresh one
+      // before the shown code expires, so the user never types a dead code.
+      if (
+        linkMode === "code" &&
+        pairDigitsRef.current &&
+        codeAtRef.current > 0 &&
+        Date.now() - codeAtRef.current > 50_000 &&
+        !refreshingRef.current
+      ) {
+        refreshingRef.current = true;
+        setCodeRefreshing(true);
+        try {
+          const fresh = await fetchPairCode(id, pairDigitsRef.current);
+          if (fresh) {
+            setPairCode(fresh);
+            codeAtRef.current = Date.now();
+            setCopied(false);
+          }
+        } catch {
+          /* keep the old code on screen — next tick retries */
+        } finally {
+          refreshingRef.current = false;
+          setCodeRefreshing(false);
+        }
+        return;
+      }
       try {
         const res = await fetch(`/api/agent/sessions/${encodeURIComponent(id)}`);
         if (!res.ok) {
@@ -545,6 +604,8 @@ export default function LinkPage() {
       setQr(null);
       setError(null);
       setPairCode(null);
+      pairDigitsRef.current = "";
+      codeAtRef.current = 0;
       setPairError(null);
       setCopied(false);
     }
@@ -586,24 +647,12 @@ export default function LinkPage() {
         const body = await startRes.json().catch(() => ({}));
         throw new Error(body.error ?? `Start failed (${startRes.status})`);
       }
-      const res = await fetch(`/api/agent/sessions/${encodeURIComponent(id)}/pairing-code`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phoneNumber: digits }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        if (res.status === 401) {
-          router.push("/signin?next=/dashboard/link");
-          return;
-        }
-        throw new Error(data.error ?? `Code request failed (${res.status})`);
-      }
-      if (data.connected) {
-        setPhase("connected");
-      } else {
-        setPairCode(data.pairingCode ?? null);
-        if (!data.pairingCode) throw new Error("WhatsApp didn't return a code — try again.");
+      const fresh = await fetchPairCode(id, digits);
+      if (fresh) {
+        setPairCode(fresh);
+        pairDigitsRef.current = digits;
+        codeAtRef.current = Date.now();
+        setCopied(false);
         setPhase("qr"); // “waiting” — the code panel shows the code + waiting note
         pollForConnection(id);
       }
@@ -1005,9 +1054,23 @@ export default function LinkPage() {
 
                   {pairError && <p className="mt-2.5 text-center text-[12px]" style={{ color: "#e66a6a" }}>{pairError}</p>}
                   {actionError && <p className="mt-2.5 text-center text-[12px]" style={{ color: "#e66a6a" }}>{actionError}</p>}
-                  {pairCode && !pairError && <p className="mt-2.5 text-[11.5px]" style={{ color: "#636c73" }}>Type it into WhatsApp now — codes expire fast, request a new one if rejected</p>}
+                  {pairCode && !pairError && (
+                    <p className="mt-2.5 flex items-center justify-center gap-1.5 text-[11.5px]" style={{ color: "#636c73" }}>
+                      {codeRefreshing && <RefreshCw size={12} className="animate-spin" />}
+                      {codeRefreshing ? "Getting you a fresh code…" : "Type it into WhatsApp now — the code refreshes itself before it expires"}
+                    </p>
+                  )}
 
                   <CodeVisualGuide />
+                  <a
+                    href="https://faq.whatsapp.com/777829757305409"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-2 block text-center text-[12px] font-semibold"
+                    style={{ color: "#00d19f" }}
+                  >
+                    Official WhatsApp linking guide ↗
+                  </a>
                   <Steps items={CODE_STEPS} />
                 </>
               ) : (
