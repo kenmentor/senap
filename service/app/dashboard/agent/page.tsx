@@ -426,184 +426,124 @@ export default function AgentPage() {
   const heroBroken = !!photoFailed[hero.id];
 
   if (!detailOpen) {
+    const switchAccount = (id: string) => {
+      setAgentAccount(id);
+      try {
+        const u = new URL(window.location.href);
+        u.searchParams.set("account", id);
+        window.history.replaceState(null, "", u.toString());
+      } catch { /* ignore */ }
+      (async () => {
+        try {
+          const res = await fetch(`/api/agent?userId=${encodeURIComponent(id)}`);
+          if (res.ok) applyConfig(await res.json());
+        } catch { /* keep current */ }
+      })();
+    };
     return (
-      <div className="mx-auto w-full max-w-[640px]">
-        <div className="flex items-baseline justify-between gap-2">
+      <div className="mx-auto w-full max-w-[640px] rounded-3xl px-4 py-4 sm:px-5" style={{ background: "rgba(0,0,0,0.35)", border: "1px solid rgba(255,255,255,0.09)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
+        <div className="flex items-baseline justify-between gap-2 px-1">
           <h2 className="text-[15px] font-semibold" style={{ color: "#e9edef" }}>Pick your employee</h2>
           <p className="text-[12px]" style={{ color: "#636c73" }}>
             {agentAccount ? <>Answering on <span style={{ color: "#00d19f" }}>{agentAccount}</span></> : "One answers at a time"}
           </p>
         </div>
         {agentAccounts.length > 1 && (
-          <div className="mt-3 flex flex-wrap gap-2">
-            {agentAccounts.map((a) => {
-              const id = a.engineId ?? a.number;
-              const active = id === agentAccount;
-              return (
-                <button
-                  key={a.id}
-                  onClick={() => {
-                    setAgentAccount(id);
-                    try {
-                      const u = new URL(window.location.href);
-                      u.searchParams.set("account", id);
-                      window.history.replaceState(null, "", u.toString());
-                    } catch { /* ignore */ }
-                    (async () => {
-                      try {
-                        const res = await fetch(`/api/agent?userId=${encodeURIComponent(id)}`);
-                        if (res.ok) applyConfig(await res.json());
-                      } catch { /* keep current */ }
-                    })();
-                  }}
-                  className="rounded-full px-4 py-2 text-[12.5px] font-semibold transition"
-                  style={active ? { background: "#00a884", color: "#04241d" } : { background: "rgba(255,255,255,0.05)", color: "#8a949b" }}
+          <div className="mt-3 flex items-center gap-3 px-1">
+            <div className="flex items-center" style={{ gap: 0 }}>
+              {agentAccounts.slice(0, 2).map((a, idx) => {
+                const id = a.engineId ?? a.number;
+                const active = id === agentAccount;
+                const initials = (a.number || "?").replace(/\D/g, "").slice(-2) || "•";
+                return (
+                  <button
+                    key={a.id}
+                    onClick={() => switchAccount(id)}
+                    title={a.number}
+                    aria-label={`Answer on ${a.number}`}
+                    className="flex h-10 w-10 items-center justify-center rounded-full text-[11px] font-bold transition"
+                    style={{
+                      background: active ? "#00a884" : "rgba(255,255,255,0.08)",
+                      color: active ? "#04241d" : "#cfd6db",
+                      border: active ? "2px solid #00a884" : "2px solid rgba(255,255,255,0.15)",
+                      marginLeft: idx === 0 ? 0 : -10,
+                      zIndex: active ? 2 : 1,
+                    }}
+                  >
+                    {initials}
+                  </button>
+                );
+              })}
+              {agentAccounts.length > 2 && (
+                <span
+                  className="flex h-10 w-10 items-center justify-center rounded-full text-[11px] font-bold"
+                  style={{ background: "rgba(255,255,255,0.06)", color: "#8a949b", border: "2px solid rgba(255,255,255,0.12)", marginLeft: -10 }}
                 >
-                  {a.number}
-                </button>
-              );
-            })}
+                  +{agentAccounts.length - 2}
+                </span>
+              )}
+            </div>
+            <span className="truncate text-[12px]" style={{ color: "#8a949b" }}>
+              {agentAccounts.find((a) => (a.engineId ?? a.number) === agentAccount)?.number ?? ""}
+            </span>
           </div>
         )}
 
-        {/* Hero card */}
-        <div className="relative mt-3.5">
-          <div className="overflow-hidden">
-            <div
-              className="flex transition-transform duration-300 ease-out"
-              style={{ transform: `translateX(-${index * 100}%)` }}
-              onTouchStart={onTouchStart}
-              onTouchEnd={onTouchEnd}
-            >
-              {EMPLOYEES.map((e) => {
-                const EI = e.icon;
-                const isActive = activeId === e.id;
-                const broken = !!photoFailed[e.id];
-                return (
-                  <div key={e.id} className="w-full shrink-0 px-0.5">
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => openDetail(e)}
-                      onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openDetail(e); } }}
-                      className="relative cursor-pointer overflow-hidden rounded-3xl p-8 text-center outline-none transition focus-visible:ring-2 focus-visible:ring-[#00a884] sm:p-10"
-                      style={{ background: "rgba(255,255,255,0.025)", border: isActive ? "1px solid rgba(0,168,132,0.55)" : "1px solid rgba(255,255,255,0.09)" }}
-                      title={`Configure ${e.name}`}
-                    >
+        <div className="mt-3 flex flex-col divide-y divide-white/10" style={{ background: "rgba(0,0,0,0.18)", borderRadius: 12, borderTop: "1px solid rgba(255,255,255,0.07)" }}>
+          {EMPLOYEES.map((e) => {
+            const EI = e.icon;
+            const isActive = activeId === e.id;
+            const broken = !!photoFailed[e.id];
+            return (
+              <div key={e.id} className="flex items-center gap-3 px-4 py-4">
+                <button
+                  onClick={() => openDetail(e)}
+                  aria-label={`Configure ${e.name}`}
+                  className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                >
+                  <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full text-[16px] font-bold" style={{ background: e.color, color: e.ink, border: "2px solid rgba(255,255,255,0.14)" }}>
+                    {e.photo && !broken ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={e.photo}
+                        alt={e.name}
+                        draggable={false}
+                        onError={() => setPhotoFailed((f) => ({ ...f, [e.id]: true }))}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : e.id === "blank" ? (
+                      <EI size={22} strokeWidth={1.75} />
+                    ) : (
+                      <span>{e.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()}</span>
+                    )}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-2">
+                      <span className="truncate text-[14px] font-bold" style={{ color: "#e9edef" }}>{e.name}</span>
                       {isActive && (
-                        <span className="absolute right-4 top-4 flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[10.5px] font-bold uppercase" style={{ background: "rgba(0,168,132,0.16)", color: "#00a884", letterSpacing: "0.08em" }}>
-                          <span className="h-1.5 w-1.5 animate-pulse rounded-full" style={{ background: "#00a884" }} /> On duty
+                        <span className="flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase" style={{ background: "rgba(0,168,132,0.16)", color: "#00d19f", letterSpacing: "0.06em" }}>
+                          <span className="h-1 w-1 animate-pulse rounded-full" style={{ background: "#00a884" }} /> On duty
                         </span>
                       )}
-                      <span className="mx-auto flex h-28 w-28 items-center justify-center overflow-hidden rounded-full text-[34px] font-bold sm:h-32 sm:w-32" style={{ background: e.color, color: e.ink, border: "3px solid rgba(255,255,255,0.12)" }}>
-                        {e.photo && !broken ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={e.photo}
-                            alt={e.name}
-                            draggable={false}
-                            onError={() => setPhotoFailed((f) => ({ ...f, [e.id]: true }))}
-                            className="h-full w-full object-cover"
-                          />
-                        ) : e.id === "blank" ? (
-                          <EI size={44} strokeWidth={1.5} />
-                        ) : (
-                          <span>{e.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()}</span>
-                        )}
-                      </span>
-                      <span className="mt-4 block font-display text-[26px] font-bold leading-tight sm:text-[30px]" style={{ color: "#e9edef" }}>{e.name}</span>
-                      <span className="mt-1 block text-[13.5px] font-semibold" style={{ color: "#00a884" }}>{e.role}</span>
-                      <span className="mx-auto mt-2 block max-w-[320px] text-[12.5px] leading-snug" style={{ color: "#8a949b" }}>{e.vibe}</span>
-                      <span className="mx-auto mt-3 flex w-fit items-center gap-1.5 rounded-full px-3 py-1.5 text-[11.5px] font-semibold" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "#aebac1" }}>
-                        {e.personality.charAt(0).toUpperCase() + e.personality.slice(1)} mode
-                      </span>
-                      <span className="mx-auto mt-5 flex w-fit items-center gap-2 rounded-xl px-5 py-2.5 text-[13px] font-semibold" style={{ background: "#00a884", color: "#04241d" }}>
-                        Tap to configure
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Arrows */}
-          <button
-            onClick={() => go(-1)}
-            aria-label="Previous agent"
-            className="absolute -left-2 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full transition hover:bg-white/10 sm:-left-5"
-            style={{ background: "rgba(17,27,33,0.9)", border: "1px solid rgba(255,255,255,0.12)", color: "#e9edef" }}
-          >
-            <ChevronLeft size={18} />
-          </button>
-          <button
-            onClick={() => go(1)}
-            aria-label="Next agent"
-            className="absolute -right-2 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full transition hover:bg-white/10 sm:-right-5"
-            style={{ background: "rgba(17,27,33,0.9)", border: "1px solid rgba(255,255,255,0.12)", color: "#e9edef" }}
-          >
-            <ChevronRight size={18} />
-          </button>
-        </div>
-
-        {/* Counter + dots */}
-        <div className="mt-3 flex items-center justify-center gap-2">
-          {EMPLOYEES.map((e, i) => (
-            <button
-              key={e.id}
-              onClick={() => setIndex(i)}
-              aria-label={`Go to ${e.name}`}
-              className="h-1.5 rounded-full transition-all"
-              style={{ width: i === index ? 22 : 6, background: i === index ? "#00a884" : "rgba(255,255,255,0.15)" }}
-            />
-          ))}
-          <span className="ml-2 text-[11.5px] font-semibold tabular-nums" style={{ color: "#636c73" }}>{index + 1} / {EMPLOYEES.length}</span>
-        </div>
-
-        {/* Scroll strip */}
-        <div ref={stripRef} className="mt-4 flex snap-x snap-mandatory gap-2.5 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
-          {EMPLOYEES.map((e, i) => {
-            const active = i === index;
-            const onDuty = activeId === e.id;
-            return (
-              <button
-                key={e.id}
-                data-thumb={i}
-                onClick={() => setIndex(i)}
-                className="flex w-[104px] shrink-0 snap-center flex-col items-center rounded-2xl px-2 py-3 transition"
-                style={active ? { background: "rgba(0,168,132,0.1)", border: "1px solid rgba(0,168,132,0.5)" } : { background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.09)" }}
-              >
-                <span className="relative flex h-11 w-11 items-center justify-center overflow-hidden rounded-full text-[14px] font-bold" style={{ background: e.color, color: e.ink }}>
-                  {e.photo && !photoFailed[e.id] ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={e.photo} alt="" draggable={false} onError={() => setPhotoFailed((f) => ({ ...f, [e.id]: true }))} className="h-full w-full object-cover" />
-                  ) : (
-                    <span>{e.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()}</span>
-                  )}
-                  {onDuty && <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full" style={{ background: "#00a884", border: "2px solid #111b21" }} />}
-                </span>
-                <span className="mt-1.5 max-w-full truncate text-[11.5px] font-semibold" style={{ color: active ? "#fff" : "#aebac1" }}>{e.name}</span>
-                <span className="max-w-full truncate text-[10px]" style={{ color: "#636c73" }}>{e.role}</span>
-              </button>
+                    </span>
+                    <span className="block truncate text-[12px] font-semibold" style={{ color: "#00a884" }}>{e.role} · {e.personality} mode</span>
+                    <span className="block truncate text-[12px]" style={{ color: "#8a949b" }}>{e.vibe}</span>
+                  </span>
+                </button>
+                {isActive ? (
+                  <span className="shrink-0 text-[11px] font-semibold" style={{ color: "#00a884" }}>Answering</span>
+                ) : (
+                  <button
+                    onClick={() => useAgent(e)}
+                    className="shrink-0 rounded-lg px-3.5 py-2.5 text-[12px] font-semibold transition active:scale-95"
+                    style={{ background: "#00a884", color: "#04241d" }}
+                  >
+                    Put on duty
+                  </button>
+                )}
+              </div>
             );
           })}
-        </div>
-
-        {/* Quick duty actions */}
-        <div className="mt-4 flex gap-2.5">
-          {activeId === hero.id ? (
-            <div className="flex flex-1 items-center justify-center gap-2 rounded-xl py-3 text-[13px] font-semibold" style={{ background: "rgba(0,168,132,0.1)", border: "1px solid rgba(0,168,132,0.4)", color: "#00a884" }}>
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full" style={{ background: "#00a884" }} />
-              {hero.name} is on duty
-            </div>
-          ) : (
-            <button onClick={() => useAgent(hero)} className="flex-1 rounded-xl text-[13px] font-semibold" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", color: "#e9edef", height: 44 }}>
-              Put {hero.name} on duty
-            </button>
-          )}
-          <button onClick={() => openDetail(hero)} className="flex-1 rounded-xl text-[13px] font-semibold" style={{ background: "#00a884", color: "#04241d", height: 44 }}>
-            Configure {hero.name}
-          </button>
         </div>
 
         {toast && (

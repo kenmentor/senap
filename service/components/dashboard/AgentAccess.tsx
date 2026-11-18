@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Bot, Clock3, Power, User, Users, Smartphone, Store } from "lucide-react";
+import { Bot, Clock3, MessageCircle, Store, Power, User, Users, Smartphone, ChevronDown } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
@@ -72,12 +72,8 @@ function Row({
 }) {
   return (
     <div
-      className="flex items-center gap-3 rounded-2xl px-3.5 py-3"
-      style={
-        indented
-          ? { background: "rgba(255,255,255,0.03)", borderLeft: "2px solid rgba(0,168,132,0.5)" }
-          : { background: "rgba(255,255,255,0.03)" }
-      }
+      className="flex items-center gap-3 px-4 py-4"
+      style={indented ? { borderLeft: "2px solid rgba(0,168,132,0.5)", paddingLeft: 14 } : undefined}
     >
       <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl" style={{ background: on ? "rgba(0,168,132,0.14)" : "rgba(255,255,255,0.05)", color: on ? "#00d19f" : "#636c73" }}>
         <Icon size={17} strokeWidth={2} />
@@ -93,6 +89,58 @@ function Row({
 
 const LABEL = { color: "#8a949b", fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase" as const };
 
+type SectionId = "schedule" | "chats" | "store";
+
+function Section({
+  id,
+  icon: Icon,
+  title,
+  summary,
+  open,
+  onToggle,
+  children,
+  last,
+}: {
+  id: SectionId;
+  icon: LucideIcon;
+  title: string;
+  summary: string;
+  open: boolean;
+  onToggle: (id: SectionId) => void;
+  children: React.ReactNode;
+  last?: boolean;
+}) {
+  return (
+    <div style={last ? undefined : { borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+      <button
+        onClick={() => onToggle(id)}
+        aria-expanded={open}
+        className="flex min-h-[64px] w-full items-center gap-3 px-2 py-4 text-left transition hover:bg-white/[0.03] active:bg-white/[0.05]"
+      >
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl" style={{ background: "rgba(0,168,132,0.14)", color: "#00d19f" }}>
+          <Icon size={17} strokeWidth={2} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-[14px] font-bold leading-tight" style={{ color: "#fff" }}>{title}</span>
+          <span className="block truncate text-[12px]" style={{ color: "#8a949b" }}>{summary}</span>
+        </span>
+        <ChevronDown
+          size={16}
+          style={{ color: "#8a949b", transform: open ? "rotate(180deg)" : "none", transition: "transform 0.15s", flexShrink: 0 }}
+        />
+      </button>
+      {open && (
+        <div
+          className="mb-3 flex flex-col divide-y divide-white/10"
+          style={{ background: "rgba(0,0,0,0.18)", borderRadius: 12, borderTop: "1px solid rgba(255,255,255,0.07)" }}
+        >
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AgentAccess() {
   const [lines, setLines] = useState<{ id: string; number: string; engineId?: string }[]>([]);
   const [line, setLine] = useState("");
@@ -103,6 +151,32 @@ export default function AgentAccess() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 3 major sections — click to expand. Persisted so the dashboard stays tidy.
+  const [expanded, setExpanded] = useState<Record<SectionId, boolean>>(() => {
+    if (typeof window === "undefined") return { schedule: true, chats: false, store: false };
+    try {
+      const raw = window.localStorage.getItem("agent-access-expanded");
+      if (raw) {
+        const p = JSON.parse(raw) as Partial<Record<SectionId, boolean>>;
+        return { schedule: p.schedule ?? true, chats: p.chats ?? false, store: p.store ?? false };
+      }
+    } catch {
+      /* fall through */
+    }
+    return { schedule: true, chats: false, store: false };
+  });
+
+  const toggleSection = (id: SectionId) => {
+    setExpanded((v) => {
+      const next = { ...v, [id]: !v[id] };
+      try {
+        window.localStorage.setItem("agent-access-expanded", JSON.stringify(next));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  };
 
   useEffect(() => {
     (async () => {
@@ -130,8 +204,6 @@ export default function AgentAccess() {
       const res = await fetch(`/api/agent?userId=${encodeURIComponent(lineId)}`);
       if (!res.ok) throw new Error("offline");
       const c = await res.json();
-      // Always apply (even empty days = everything off) so the UI never
-      // shows stale switches after a save.
       if (Array.isArray(c.days)) setDays(c.days.filter((d: unknown) => typeof d === "string"));
       if (typeof c.open === "string" && c.open) setOpen(c.open);
       if (typeof c.close === "string" && c.close) setClose(c.close);
@@ -176,21 +248,36 @@ export default function AgentAccess() {
   const flipControl = (k: keyof Control) => {
     const prev = control[k];
     setControl((v) => ({ ...v, [k]: !v[k] }));
-    // Pass the revert value so a failed save rolls the switch back.
     void save(`ctl-${k}`, { control: { [k]: !prev } }, { [k]: prev } as Partial<Control>);
   };
 
-  const master = control.readMessages && !control.paused;
+  const onDuty = !control.paused;
+  const master = control.readMessages && onDuty;
+
+  const scheduleSummary = !onDuty
+    ? "Paused — she stays silent"
+    : days.length === 7
+      ? `Every day · ${open}–${close}`
+      : days.length === 0
+        ? `No days · ${open}–${close}`
+        : `${days.map((d) => d.slice(0, 3)).join(", ")} · ${open}–${close}`;
+
+  const chatsSummary = !master
+    ? "Silent to customers"
+    : `DM ${control.replyDM ? "on" : "off"} · Groups ${control.replyGroups ? "on" : "off"}`;
+
+  const storeOn = (control.statusImport ? 1 : 0) + (control.catalogMirror ? 1 : 0);
+  const storeSummary = storeOn === 2 ? "Status + catalog on" : storeOn === 0 ? "Both off" : storeOn === 1 && control.statusImport ? "Status on · catalog off" : "Catalog on · status off";
 
   return (
-    <section className="rounded-3xl p-5 sm:p-6" style={{ background: "#10161b", border: "1px solid rgba(255,255,255,0.09)" }}>
-      <header className="flex items-center gap-3">
+    <section className="rounded-3xl px-4 py-4 sm:px-5" style={{ background: "rgba(0,0,0,0.35)", border: "1px solid rgba(255,255,255,0.09)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
+      <header className="flex items-center gap-3 px-1 py-1">
         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl" style={{ background: "#00a884", color: "#04241d" }}>
           <Bot size={20} strokeWidth={2.25} />
         </span>
         <span className="min-w-0 flex-1">
           <span className="block text-[16px] font-bold leading-tight" style={{ color: "#fff" }}>Agent access</span>
-          <span className="block text-[12px]" style={{ color: "#8a949b" }}>When she works, and what she may touch</span>
+          <span className="block text-[12px]" style={{ color: "#8a949b" }}>When she works · what she answers · store</span>
         </span>
         <span className="flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-[11.5px] font-bold" style={{ background: master ? "rgba(0,168,132,0.14)" : "rgba(255,255,255,0.06)", color: master ? "#00d19f" : "#8a949b" }}>
           <span className="h-1.5 w-1.5 rounded-full" style={{ background: master ? "#00a884" : "#636c73" }} />
@@ -199,22 +286,44 @@ export default function AgentAccess() {
       </header>
 
       {lines.length > 1 && (
-        <div className="mt-4 flex flex-wrap gap-2">
-          {lines.map((a) => {
-            const id = a.engineId ?? a.number;
-            const active = id === line;
-            return (
-              <button
-                key={a.id}
-                onClick={() => setLine(id)}
-                disabled={!!saving}
-                className="rounded-full px-4 py-2 text-[12.5px] font-semibold transition disabled:opacity-50"
-                style={active ? { background: "#00a884", color: "#04241d" } : { background: "rgba(255,255,255,0.05)", color: "#8a949b" }}
+        <div className="mt-3 flex items-center gap-3 px-1">
+          <div className="flex items-center" style={{ gap: 0 }}>
+            {lines.slice(0, 2).map((a, idx) => {
+              const id = a.engineId ?? a.number;
+              const active = id === line;
+              const initials = (a.number || "?").replace(/\D/g, "").slice(-2) || "•";
+              return (
+                <button
+                  key={a.id}
+                  onClick={() => setLine(id)}
+                  disabled={!!saving}
+                  title={a.number}
+                  aria-label={`Switch to ${a.number}`}
+                  className="flex h-10 w-10 items-center justify-center rounded-full text-[11px] font-bold transition disabled:opacity-50"
+                  style={{
+                    background: active ? "#00a884" : "rgba(255,255,255,0.08)",
+                    color: active ? "#04241d" : "#cfd6db",
+                    border: active ? "2px solid #00a884" : "2px solid rgba(255,255,255,0.15)",
+                    marginLeft: idx === 0 ? 0 : -10,
+                    zIndex: active ? 2 : 1,
+                  }}
+                >
+                  {initials}
+                </button>
+              );
+            })}
+            {lines.length > 2 && (
+              <span
+                className="flex h-10 w-10 items-center justify-center rounded-full text-[11px] font-bold"
+                style={{ background: "rgba(255,255,255,0.06)", color: "#8a949b", border: "2px solid rgba(255,255,255,0.12)", marginLeft: -10 }}
               >
-                {a.number}
-              </button>
-            );
-          })}
+                +{lines.length - 2}
+              </span>
+            )}
+          </div>
+          <span className="truncate text-[12px]" style={{ color: "#8a949b" }}>
+            {lines.find((l) => (l.engineId ?? l.number) === line)?.number ?? ""}
+          </span>
         </div>
       )}
 
@@ -226,68 +335,77 @@ export default function AgentAccess() {
         </div>
       ) : (
         <>
-          <p className="mt-5" style={LABEL}>Active days</p>
-          <div className="mt-2 grid grid-cols-7 gap-1.5">
-            {DAYS.map((d) => {
-              const on = days.includes(d);
-              return (
-                <button
-                  key={d}
-                  onClick={() => flipDay(d)}
-                  disabled={!!saving}
-                  aria-pressed={on}
-                  title={d}
-                  className="h-10 rounded-xl text-[12px] font-bold transition disabled:opacity-50"
-                  style={on ? { background: "#00a884", color: "#04241d" } : { background: "rgba(255,255,255,0.05)", color: "#8a949b" }}
-                >
-                  {d.slice(0, 1)}
-                </button>
-              );
-            })}
-          </div>
+          <div className="mt-2 flex flex-col">
+            {/* 1 — WHEN SHE WORKS: duty + days + time */}
+            <Section id="schedule" icon={Clock3} title="When she works" summary={scheduleSummary} open={expanded.schedule} onToggle={toggleSection}>
+              <Row icon={Power} title={onDuty ? "On duty" : "Paused"} sub={onDuty ? "She follows schedule below" : "Total silence — your messages still work"} on={onDuty} onFlip={() => flipControl("paused")} disabled={!!saving} />
+              <div className="px-4 py-4">
+                <p style={LABEL}>Active days</p>
+                <div className="mt-2 grid grid-cols-7 gap-1.5">
+                  {DAYS.map((d) => {
+                    const isOn = days.includes(d);
+                    return (
+                      <button
+                        key={d}
+                        onClick={() => flipDay(d)}
+                        disabled={!!saving}
+                        aria-pressed={isOn}
+                        title={d}
+                        className="h-10 rounded-xl text-[12px] font-bold transition disabled:opacity-50"
+                        style={isOn ? { background: "#00a884", color: "#04241d" } : { background: "rgba(255,255,255,0.05)", color: "#8a949b" }}
+                      >
+                        {d.slice(0, 1)}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="px-4 py-4">
+                <p className="flex items-center gap-1.5" style={LABEL}>
+                  <Clock3 size={12} /> Active time
+                </p>
+                <div className="mt-2 flex items-center gap-2.5">
+                  <input
+                    type="time"
+                    value={open}
+                    disabled={!!saving}
+                    onChange={(e) => {
+                      setOpen(e.target.value);
+                      void save("open", { open: e.target.value });
+                    }}
+                    aria-label="Active from"
+                    className="h-11 min-w-0 flex-1 rounded-xl px-3 text-center text-[14px] font-semibold outline-none disabled:opacity-50"
+                    style={{ background: "rgba(255,255,255,0.05)", color: "#e9edef", colorScheme: "dark" }}
+                  />
+                  <span style={{ color: "#636c73" }}>→</span>
+                  <input
+                    type="time"
+                    value={close}
+                    disabled={!!saving}
+                    onChange={(e) => {
+                      setClose(e.target.value);
+                      void save("close", { close: e.target.value });
+                    }}
+                    aria-label="Active until"
+                    className="h-11 min-w-0 flex-1 rounded-xl px-3 text-center text-[14px] font-semibold outline-none disabled:opacity-50"
+                    style={{ background: "rgba(255,255,255,0.05)", color: "#e9edef", colorScheme: "dark" }}
+                  />
+                </div>
+              </div>
+            </Section>
 
-          <p className="mt-5 flex items-center gap-1.5" style={LABEL}>
-            <Clock3 size={12} /> Active time
-          </p>
-          <div className="mt-2 flex items-center gap-2.5">
-            <input
-              type="time"
-              value={open}
-              disabled={!!saving}
-              onChange={(e) => {
-                setOpen(e.target.value);
-                void save("open", { open: e.target.value });
-              }}
-              aria-label="Active from"
-              className="h-11 min-w-0 flex-1 rounded-xl px-3 text-center text-[14px] font-semibold outline-none disabled:opacity-50"
-              style={{ background: "rgba(255,255,255,0.05)", color: "#e9edef", colorScheme: "dark" }}
-            />
-            <span style={{ color: "#636c73" }}>→</span>
-            <input
-              type="time"
-              value={close}
-              disabled={!!saving}
-              onChange={(e) => {
-                setClose(e.target.value);
-                void save("close", { close: e.target.value });
-              }}
-              aria-label="Active until"
-              className="h-11 min-w-0 flex-1 rounded-xl px-3 text-center text-[14px] font-semibold outline-none disabled:opacity-50"
-              style={{ background: "rgba(255,255,255,0.05)", color: "#e9edef", colorScheme: "dark" }}
-            />
-          </div>
+            {/* 2 — WHAT SHE MAY ANSWER: DM + groups */}
+            <Section id="chats" icon={MessageCircle} title="Chats she answers" summary={chatsSummary} open={expanded.chats} onToggle={toggleSection}>
+              <Row icon={Power} title="Read & reply" sub={master ? "She answers customers" : "Total silence to customers"} on={master} onFlip={() => flipControl("readMessages")} disabled={!!saving} />
+              <Row icon={User} title="1:1 chats" sub="Private conversations" on={control.replyDM && master} onFlip={() => flipControl("replyDM")} disabled={!!saving || !master} indented />
+              <Row icon={Users} title="Groups" sub="Group chats this line is in" on={control.replyGroups && master} onFlip={() => flipControl("replyGroups")} disabled={!!saving || !master} indented />
+            </Section>
 
-          <p className="mt-5" style={LABEL}>Access level</p>
-          <div className="mt-2 flex flex-col gap-2">
-            <Row icon={Power} title="Read & reply" sub={master ? "She answers customers" : "Total silence to customers"} on={master} onFlip={() => flipControl("readMessages")} disabled={!!saving} />
-            {master && (
-              <>
-                <Row icon={User} title="1:1 chats" sub="Private conversations" on={control.replyDM} onFlip={() => flipControl("replyDM")} disabled={!!saving} indented />
-                <Row icon={Users} title="Groups" sub="Group chats this line is in" on={control.replyGroups} onFlip={() => flipControl("replyGroups")} disabled={!!saving} indented />
-              </>
-            )}
-            <Row icon={Smartphone} title="Status to store" sub="Statuses become products" on={control.statusImport} onFlip={() => flipControl("statusImport")} disabled={!!saving} />
-            <Row icon={Store} title="Post to catalog" sub="Mirror to WA Business catalog" on={control.catalogMirror} onFlip={() => flipControl("catalogMirror")} disabled={!!saving} />
+            {/* 3 — STORE AUTOMATION: status + catalog */}
+            <Section id="store" icon={Store} title="Store automation" summary={storeSummary} open={expanded.store} onToggle={toggleSection} last>
+              <Row icon={Smartphone} title="Status to store" sub="Statuses become products" on={control.statusImport} onFlip={() => flipControl("statusImport")} disabled={!!saving} />
+              <Row icon={Store} title="Post to catalog" sub="Mirror to WA Business catalog" on={control.catalogMirror} onFlip={() => flipControl("catalogMirror")} disabled={!!saving} />
+            </Section>
           </div>
 
           {error && (

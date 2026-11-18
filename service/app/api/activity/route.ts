@@ -275,7 +275,7 @@ export async function GET() {
           {
             label: "Active customers",
             value: String(stats.customers7d),
-            delta: pctDelta(stats.customersPrev7d, stats.customersPrev7d),
+            delta: pctDelta(stats.customers7d, stats.customersPrev7d),
           },
           {
             label: "Lined up",
