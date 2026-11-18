@@ -1,5 +1,5 @@
 import AiClient from "./ai-client.js";
-import { executeTool, toolSchemas } from "../sessions/agent-tools/index.js";
+import { executeTool, toolSchemasFor } from "../sessions/agent-tools/index.js";
 import { takeDueReminders } from "../sessions/agent-tools/todo.js";
 import { ModelOutageError } from "../sessions/model-outage.js";
 import {
@@ -364,9 +364,11 @@ export async function handleCustomerMessage(
           },
         ]
       : []),
-    ...req.history.map((h) => ({
+    ...req.history.slice(-20).map((h) => ({
       role: h.role,
-      content: h.content,
+      // Long chats bloat every call: cap each turn. Stored history keeps
+      // the full text; the model only needs the gist of old turns.
+      content: h.content.length > 800 ? h.content.slice(0, 800) + "…[truncated]" : h.content,
     })),
     // Trusted out-of-band interrupt: system role, never user-parseable.
     ...(req.scheduledTask
@@ -379,7 +381,10 @@ export async function handleCustomerMessage(
       : []),
   ];
 
-  const tools = toolSchemas();
+  // Lean toolset per audience: customers get only what they may call.
+  // Owner-only schemas are dead weight on customer calls (rejected in code
+  // anyway) — cutting them shrinks every prompt by thousands of tokens.
+  const tools = toolSchemasFor(isOwner);
   let mediaSent = false;
   // Set the moment a MODEL call itself throws (timeout, 429 quota, bad
   // token, 5xx). Anything else (tool errors, empty content) is not an

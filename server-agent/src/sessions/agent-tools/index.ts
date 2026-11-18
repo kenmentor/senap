@@ -45,7 +45,18 @@ export const ALL_TOOLS: ToolDefinition[] = [
 ];
 
 export function toolSchemas(): OpenAI.Chat.Completions.ChatCompletionTool[] {
-  return ALL_TOOLS.map((t) => ({
+  return toolSchemasFor(true);
+}
+
+/**
+ * Speed + focus: customers only ever see tools they may actually call
+ * (customer scope + current-chat exceptions like send_media). Owner-only
+ * management tools are rejected in code anyway — sending their schemas
+ * just bloats every prompt by thousands of tokens and slows every reply.
+ */
+export function toolSchemasFor(owner: boolean): OpenAI.Chat.Completions.ChatCompletionTool[] {
+  const list = owner ? ALL_TOOLS : ALL_TOOLS.filter((t) => t.scope === "customer" || t.allowCurrentChat);
+  return list.map((t) => ({
     type: "function",
     function: {
       name: t.name,
