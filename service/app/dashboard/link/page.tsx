@@ -1127,7 +1127,10 @@ export default function LinkPage() {
               )}
             </div>
 
-            <div className="mt-5 flex flex-col gap-2.5">
+            <div
+              className="sticky bottom-0 -mx-6 flex flex-col gap-2.5 px-6 pb-1 pt-3"
+              style={{ background: "#111b21", borderTop: "1px solid rgba(255,255,255,0.08)" }}
+            >
               {phase === "connected" ? (
                 <button onClick={confirmLinked} disabled={confirmBusy} className="flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl text-[15px] font-semibold transition active:scale-[0.99] disabled:opacity-50" style={{ background: "#00a884", color: "#04241d" }}>
                   {confirmBusy ? "Saving…" : <>Done <ArrowRight size={16} strokeWidth={2.5} /></>}
