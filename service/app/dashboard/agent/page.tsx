@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { UserRound, Bot, Sparkles, CaseSensitive, Save, Clock3, Plus, ArrowLeft, Check, Hand, Tag, BellOff, AlertTriangle, Languages, Moon, ShieldCheck, Package, Briefcase, HeartHandshake, Truck, Send, ChevronLeft, ChevronRight, Zap, type LucideIcon } from "lucide-react";
+import { UserRound, Bot, Sparkles, CaseSensitive, Save, Clock3, Plus, ArrowLeft, Check, Hand, Tag, BellOff, AlertTriangle, Languages, Moon, ShieldCheck, Package, Briefcase, HeartHandshake, Truck, Send, ChevronLeft, ChevronRight, Zap, QrCode, MessageCircle, type LucideIcon } from "lucide-react";
 import ChatAccess from "./chat-access";
 
 const EX_CUSTOMER_DEFAULT = "Do you still have the Tecno Spark 20?";
@@ -41,116 +41,24 @@ function strengthLabel(score: number, total: number): { label: string; color: st
 
 type Employee = { id: string; name: string; role: string; vibe: string; acts: string; never: string; greeting: string; personality: string; avatar: string; photo: string; color: string; ink: string; icon: LucideIcon };
 
-/** Reliable Nigerian portraits — pure inline SVG, zero network (replaces randomuser photos). */
-function Portrait({ id, size = 48 }: { id: string; size?: number }) {
-  const key = (id || "blank").toLowerCase();
-  const skin = key === "ade" || key === "tunde" ? "#5a3a22" : key === "zara" ? "#6b4423" : key === "blank" ? "#8a949b" : "#7a4b2a";
-  return (
-    <svg width={size} height={size} viewBox="0 0 64 64" className="h-full w-full" aria-hidden>
-      <rect width="64" height="64" fill="#0e151a" />
-      <circle cx="32" cy="26" r="22" fill="#00a884" opacity="0.12" />
-      {key === "amaka" && (
-        <g>
-          <path d="M14 26 Q12 8 32 8 Q52 8 50 26 L46 26 Q48 12 32 12 Q16 12 18 26 Z" fill="#101010" />
-          <circle cx="18" cy="30" r="3" fill="#101010" />
-          <circle cx="46" cy="30" r="3" fill="#101010" />
-          <rect x="26" y="44" width="12" height="10" rx="4" fill={skin} />
-          <path d="M12 64 Q14 50 32 50 Q50 50 52 64 Z" fill="#00a884" />
-          <ellipse cx="32" cy="32" rx="14" ry="16" fill={skin} />
-          <path d="M25 38 Q32 44 39 38" stroke="#2b1a10" strokeWidth="2" strokeLinecap="round" fill="none" />
-          <circle cx="26" cy="31" r="1.8" fill="#1a0f08" />
-          <circle cx="38" cy="31" r="1.8" fill="#1a0f08" />
-          <circle cx="18.5" cy="36" r="1.6" fill="#e8b45b" />
-          <circle cx="45.5" cy="36" r="1.6" fill="#e8b45b" />
-        </g>
-      )}
-      {key === "zara" && (
-        <g>
-          <path d="M12 26 Q14 6 32 6 Q50 6 52 26 L48 28 Q46 14 32 14 Q18 14 16 28 Z" fill="#e0569b" />
-          <circle cx="24" cy="14" r="2.4" fill="#ffd166" />
-          <circle cx="34" cy="11" r="2" fill="#00a884" />
-          <circle cx="42" cy="16" r="2.2" fill="#ffd166" />
-          <rect x="26" y="44" width="12" height="10" rx="4" fill={skin} />
-          <path d="M12 64 Q14 50 32 50 Q50 50 52 64 Z" fill="#e0569b" />
-          <ellipse cx="32" cy="33" rx="14" ry="15" fill={skin} />
-          <path d="M24 39 Q32 47 40 39" stroke="#2b1a10" strokeWidth="2.2" strokeLinecap="round" fill="none" />
-          <circle cx="26" cy="31" r="1.8" fill="#1a0f08" />
-          <circle cx="38" cy="31" r="1.8" fill="#1a0f08" />
-          <circle cx="18.5" cy="37" r="2" fill="none" stroke="#ffd166" strokeWidth="1.4" />
-          <circle cx="45.5" cy="37" r="2" fill="none" stroke="#ffd166" strokeWidth="1.4" />
-        </g>
-      )}
-      {key === "ade" && (
-        <g>
-          <path d="M18 26 Q18 12 32 12 Q46 12 46 26 L44 24 Q42 15 32 15 Q22 15 20 24 Z" fill="#101010" />
-          <rect x="26" y="44" width="12" height="10" rx="4" fill={skin} />
-          <path d="M12 64 Q14 50 32 50 Q50 50 52 64 Z" fill="#4285f4" />
-          <rect x="28" y="50" width="8" height="14" fill="#fff" opacity="0.9" />
-          <ellipse cx="32" cy="32" rx="13" ry="15" fill={skin} />
-          <rect x="21" y="28" width="9" height="7" rx="2" fill="none" stroke="#111b21" strokeWidth="1.8" />
-          <rect x="34" y="28" width="9" height="7" rx="2" fill="none" stroke="#111b21" strokeWidth="1.8" />
-          <path d="M30 31 L34 31" stroke="#111b21" strokeWidth="1.8" />
-          <circle cx="25.5" cy="31.5" r="1.4" fill="#1a0f08" />
-          <circle cx="38.5" cy="31.5" r="1.4" fill="#1a0f08" />
-          <path d="M27 40 Q32 38.5 37 40" stroke="#101010" strokeWidth="2.4" strokeLinecap="round" fill="none" />
-        </g>
-      )}
-      {key === "nkechi" && (
-        <g>
-          <path d="M10 28 Q12 4 32 4 Q52 4 54 28 L50 30 Q48 12 32 12 Q16 12 14 30 Z" fill="#e8a33d" />
-          <path d="M20 10 Q32 6 44 10" stroke="#b8741f" strokeWidth="2" fill="none" strokeLinecap="round" />
-          <rect x="26" y="44" width="12" height="10" rx="4" fill={skin} />
-          <path d="M12 64 Q14 50 32 50 Q50 50 52 64 Z" fill="#e8a33d" />
-          <ellipse cx="32" cy="33" rx="13.5" ry="14.5" fill={skin} />
-          <circle cx="26.5" cy="32" r="1.6" fill="#1a0f08" />
-          <circle cx="37.5" cy="32" r="1.6" fill="#1a0f08" />
-          <path d="M25 39 Q32 45 39 39" stroke="#2b1a10" strokeWidth="2" strokeLinecap="round" fill="none" />
-          <circle cx="19" cy="37" r="1.8" fill="#ffd166" />
-          <circle cx="45" cy="37" r="1.8" fill="#ffd166" />
-        </g>
-      )}
-      {key === "tunde" && (
-        <g>
-          <path d="M14 24 Q16 10 32 10 Q48 10 50 24 L52 26 L12 26 Z" fill="#22b8cf" />
-          <rect x="12" y="24" width="40" height="3" rx="1.5" fill="#1899ad" />
-          <rect x="26" y="44" width="12" height="10" rx="4" fill={skin} />
-          <path d="M12 64 Q14 50 32 50 Q50 50 52 64 Z" fill="#22b8cf" />
-          <ellipse cx="32" cy="33" rx="13" ry="14.5" fill={skin} />
-          <circle cx="26.5" cy="32" r="1.7" fill="#1a0f08" />
-          <circle cx="37.5" cy="32" r="1.7" fill="#1a0f08" />
-          <path d="M26 40 Q32 43 38 40" stroke="#2b1a10" strokeWidth="2" strokeLinecap="round" fill="none" />
-        </g>
-      )}
-      {(key === "blank" || !["amaka", "zara", "ade", "nkechi", "tunde"].includes(key)) && (
-        <g>
-          <ellipse cx="32" cy="32" rx="13" ry="14" fill="#2a3942" />
-          <circle cx="27" cy="31" r="1.8" fill="#e9edef" />
-          <circle cx="37" cy="31" r="1.8" fill="#e9edef" />
-          <path d="M26 39 Q32 43 38 39" stroke="#8a949b" strokeWidth="2" strokeLinecap="round" fill="none" />
-        </g>
-      )}
-    </svg>
-  );
-}
-
 const EMPLOYEES: Employee[] = [
-  { id: "amaka", name: "Amaka", role: "Sales closer", vibe: "Warm, sharp, always closing.", personality: "friendly", avatar: "portrait", photo: "", color: "#00a884", ink: "#04241d", icon: UserRound,
+  { id: "amaka", name: "Amaka", role: "Sales closer", vibe: "Warm, sharp, always closing.", personality: "friendly", avatar: "photo", photo: "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=200&q=80&auto=format&fit=crop", color: "#00a884", ink: "#04241d", icon: UserRound,
     greeting: "Hello, welcome to Nala Phones! 💚 How can I help you today?",
     acts: `You are Amaka, the sales assistant for Nala Phones. Greet every customer warmly. Always check live stock before quoting, and confirm price before taking an order.`,
     never: "Never invent stock. Hold promotions and reports for owner approval." },
-  { id: "zara", name: "Zara", role: "Hype marketer", vibe: "Energy, emojis, urgency.", personality: "playful", avatar: "portrait", photo: "", color: "#e0569b", ink: "#ffffff", icon: Sparkles,
+  { id: "zara", name: "Zara", role: "Hype marketer", vibe: "Energy, emojis, urgency.", personality: "playful", avatar: "photo", photo: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=200&q=80&auto=format&fit=crop", color: "#e0569b", ink: "#ffffff", icon: Sparkles,
     greeting: "Heeey! 🔥 Zara here — today's deals are HOT. What are we shopping for?",
       acts: `You are Zara, the hype marketer for Nala Phones. Bring energy and urgency to every chat. Push today's deal hard but stay honest — only quote live stock.`,
     never: "Never invent discounts. Get owner approval before publishing any promo." },
-  { id: "ade", name: "Mr Ade", role: "Strict cashier", vibe: "Precise. No credit, no stories.", personality: "professional", avatar: "portrait", photo: "", color: "#4285f4", ink: "#ffffff", icon: Briefcase,
+  { id: "ade", name: "Mr Ade", role: "Strict cashier", vibe: "Precise. No credit, no stories.", personality: "professional", avatar: "photo", photo: "https://images.unsplash.com/photo-1560250097-0b93528c311a?w=200&q=80&auto=format&fit=crop", color: "#4285f4", ink: "#ffffff", icon: Briefcase,
     greeting: "Good day. This is Mr Ade, Nala Phones cashier. How may I assist you?",
     acts: `You are Mr Ade, the cashier for Nala Phones. Be precise and formal. Confirm every amount twice. Issue a receipt note for every payment.`,
     never: "No credit and no discounts without owner approval." },
-  { id: "nkechi", name: "Mama Nkechi", role: "Customer care", vibe: "Family treatment, fast fixes.", personality: "friendly", avatar: "portrait", photo: "", color: "#e8a33d", ink: "#04241d", icon: HeartHandshake,
+  { id: "nkechi", name: "Mama Nkechi", role: "Customer care", vibe: "Family treatment, fast fixes.", personality: "friendly", avatar: "photo", photo: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=200&q=80&auto=format&fit=crop", color: "#e8a33d", ink: "#04241d", icon: HeartHandshake,
     greeting: "Welcome, my dear! Mama Nkechi here — tell me what you need and consider it handled. 💛",
       acts: `You are Nkechi, customer care for Nala Phones. Treat every customer like family. Listen first, solve fast.`,
     never: "Never argue with a customer. Escalate complaints to the owner with full context." },
-  { id: "tunde", name: "Tunde", role: "Delivery lead", vibe: "Short replies, on-time drops.", personality: "concise", avatar: "portrait", photo: "", color: "#22b8cf", ink: "#04241d", icon: Truck,
+  { id: "tunde", name: "Tunde", role: "Delivery lead", vibe: "Short replies, on-time drops.", personality: "concise", avatar: "photo", photo: "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=200&q=80&auto=format&fit=crop", color: "#22b8cf", ink: "#04241d", icon: Truck,
     greeting: "Tunde here. Send your address + what you need. Fast dispatch.",
       acts: `You are Tunde, delivery coordinator for Nala Phones. Keep replies short. Confirm address, phone number and delivery window for every order.`,
     never: "Never promise a delivery time you can't meet. Flag failed deliveries to the owner immediately." },
@@ -158,7 +66,6 @@ const EMPLOYEES: Employee[] = [
 ];
 
 const AVATARS = [
-  { id: "portrait", label: "Portrait", icon: UserRound },
   { id: "employee", label: "Employee", icon: UserRound },
   { id: "bot", label: "Assistant", icon: Bot },
   { id: "spark", label: "Spark", icon: Sparkles },
@@ -201,8 +108,8 @@ export default function AgentPage() {
   const [activeId, setActiveId] = useState("amaka");
   const [name, setName] = useState(EMPLOYEES[0].name);
   const [role, setRole] = useState(EMPLOYEES[0].role);
-  const [avatar, setAvatar] = useState<string>("portrait");
-  const [photo, setPhoto] = useState("");
+  const [avatar, setAvatar] = useState<string>("photo");
+  const [photo, setPhoto] = useState(EMPLOYEES[0].photo);
   const [avatarColor, setAvatarColor] = useState(EMPLOYEES[0].color);
   const [avatarInk, setAvatarInk] = useState(EMPLOYEES[0].ink);
   const [acts, setActs] = useState(EMPLOYEES[0].acts);
@@ -293,14 +200,8 @@ export default function AgentPage() {
     if (str(c.activeEmp)) setActiveId(c.activeEmp as string);
     if (c.name !== undefined) setName(str(c.name));
     if (c.role !== undefined) setRole(str(c.role));
-    // Legacy randomuser photos are retired — coerce to the built-in portrait.
-    if (c.photo !== undefined && typeof c.photo === "string" && c.photo.includes("randomuser.me")) {
-      setAvatar("portrait");
-      setPhoto("");
-    } else {
-      if (str(c.avatar)) setAvatar(c.avatar as string);
-      if (c.photo !== undefined) setPhoto(str(c.photo));
-    }
+    if (str(c.avatar)) setAvatar(c.avatar as string);
+    if (c.photo !== undefined) setPhoto(str(c.photo));
     if (str(c.avatarColor)) setAvatarColor(c.avatarColor as string);
     if (str(c.avatarInk)) setAvatarInk(c.avatarInk as string);
     if (str(c.personality)) setPersonality(c.personality as string);
@@ -421,9 +322,8 @@ export default function AgentPage() {
     if (e.id === "blank") return;
     setName(e.name);
     setRole(e.role);
-    // Built-in Nigerian portrait — the agent assumes this look everywhere.
-    setAvatar("portrait");
-    setPhoto("");
+    setAvatar("photo");
+    setPhoto(e.photo);
     setAvatarColor(e.color);
     setAvatarInk(e.ink);
     setPersonality(e.personality);
@@ -504,10 +404,8 @@ export default function AgentPage() {
 
   const AvatarIcon = (AVATARS.find((a) => a.id === avatar) ?? AVATARS[0]).icon;
   const initials = name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase() || "AG";
-  const showPhoto = avatar === "photo" && photo !== "" && !photo.includes("randomuser.me");
-  const showPortrait = avatar === "portrait";
-  const portraitId = (EMPLOYEES.find((e) => e.id === empId)?.id ?? "blank") as string;
-  const avatarOptions = photo !== "" && !photo.includes("randomuser.me") ? [{ id: "photo", label: "Photo", icon: UserRound }, ...AVATARS] : [...AVATARS];
+  const showPhoto = avatar === "photo" && photo !== "";
+  const avatarOptions = photo !== "" ? [{ id: "photo", label: "Photo", icon: UserRound }, ...AVATARS] : [...AVATARS];
 
   const faceImg = (extra = "") => (
     // eslint-disable-next-line @next/next/no-img-element
@@ -616,6 +514,24 @@ export default function AgentPage() {
             </span>
           </div>
         )}
+        {agentAccounts.length === 0 && (
+          <a
+            href="/dashboard/link"
+            className="mt-3 flex items-center gap-4 rounded-2xl p-5 transition active:scale-[0.99]"
+            style={{ background: "rgba(0,168,132,0.12)", border: "1px dashed rgba(0,168,132,0.55)" }}
+          >
+            <span className="flex h-16 w-16 shrink-0 items-center justify-center rounded-3xl" style={{ background: "#00a884", color: "#04241d" }}>
+              <QrCode size={34} strokeWidth={2} />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-[16px] font-extrabold leading-tight" style={{ color: "#fff" }}>Link your WhatsApp</span>
+              <span className="mt-0.5 block text-[12.5px] leading-snug" style={{ color: "#aebac1" }}>Scan once — your agent starts answering this number.</span>
+            </span>
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full" style={{ background: "#00a884", color: "#04241d" }}>
+              <MessageCircle size={19} strokeWidth={2.25} />
+            </span>
+          </a>
+        )}
 
         <div className="mt-3 flex flex-col divide-y divide-white/10" style={{ background: "rgba(0,0,0,0.18)", borderRadius: 12, borderTop: "1px solid rgba(255,255,255,0.07)" }}>
           {EMPLOYEES.map((e) => {
@@ -629,10 +545,19 @@ export default function AgentPage() {
                   className="flex min-w-0 flex-1 items-center gap-3 text-left"
                 >
                   <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full text-[16px] font-bold" style={{ background: e.color, color: e.ink, border: "2px solid rgba(255,255,255,0.14)" }}>
-                    {e.id === "blank" ? (
+                    {e.photo && !photoFailed[e.id] ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={e.photo}
+                        alt={e.name}
+                        draggable={false}
+                        onError={() => setPhotoFailed((f) => ({ ...f, [e.id]: true }))}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : e.id === "blank" ? (
                       <EI size={22} strokeWidth={1.75} />
                     ) : (
-                      <Portrait id={e.id} size={48} />
+                      <span>{e.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()}</span>
                     )}
                   </span>
                   <span className="min-w-0 flex-1">
@@ -681,7 +606,7 @@ export default function AgentPage() {
           <ArrowLeft size={17} />
         </button>
         <span className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl text-[19px] font-bold" style={{ background: avatarColor, color: avatarInk }}>
-          {showPortrait ? <Portrait id={portraitId} size={56} /> : showPhoto ? faceImg() : avatar === "initials" ? initials : <AvatarIcon size={26} strokeWidth={1.75} />}
+          {showPhoto ? faceImg() : avatar === "initials" ? initials : <AvatarIcon size={26} strokeWidth={1.75} />}
         </span>
         <div className="min-w-0 flex-1">
           <h1 className="font-display truncate text-[20px] font-bold leading-tight" style={{ color: "#e9edef" }}>{name || "Agent"}</h1>
@@ -729,9 +654,7 @@ export default function AgentPage() {
                   className="flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-[13px] font-medium transition"
                   style={active ? { background: "rgba(0,168,132,0.14)", border: "1px solid rgba(0,168,132,0.45)", color: "#e9edef" } : { background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.09)", color: "#8a949b" }}
                 >
-                  {a.id === "portrait" ? (
-                    <span className="h-5 w-5 overflow-hidden rounded-full"><Portrait id={portraitId} size={20} /></span>
-                  ) : a.id === "photo" ? (
+                  {a.id === "photo" ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={photo} alt="" draggable={false} onError={() => setAvatar("initials")} className="h-5 w-5 rounded-full object-cover" />
                   ) : a.id === "initials" ? (
@@ -958,7 +881,7 @@ export default function AgentPage() {
         <section className="overflow-hidden rounded-2xl" style={card}>
           <div className="flex items-center gap-3 px-5 py-3.5" style={{ background: "#1f2c34" }}>
             <span className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full text-[12px] font-bold" style={{ background: avatarColor, color: avatarInk }}>
-              {showPortrait ? <Portrait id={portraitId} size={36} /> : showPhoto ? faceImg() : avatar === "initials" ? initials : <AvatarIcon size={17} />}
+              {showPhoto ? faceImg() : avatar === "initials" ? initials : <AvatarIcon size={17} />}
             </span>
             <div>
               <p className="text-[13.5px] font-bold" style={{ color: "#e9edef" }}>{name || "Agent"}</p>
