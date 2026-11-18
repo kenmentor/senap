@@ -163,7 +163,10 @@ export default class AiClient {
           p.client.chat.completions.create({
             model: p.model,
             messages: slim,
-            max_tokens: opts?.maxTokens ?? 1200,
+            // 2000: reasoning models (gpt-oss) spend completion budget on
+            // thinking first — 1200 starved long contexts into length
+            // cutoffs, which came back as empty replies.
+            max_tokens: opts?.maxTokens ?? 2000,
             ...(tools?.length && { tools, tool_choice: "auto" }),
             // Reasoning models (gpt-oss) spend most of their time thinking;
             // micro-calls (probes, classifiers, holding lines) get "low".

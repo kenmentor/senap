@@ -385,6 +385,8 @@ export async function handleCustomerMessage(
   // token, 5xx). Anything else (tool errors, empty content) is not an
   // outage and keeps the old human fallback below.
   let outage: unknown = null;
+  let stepsUsed = 0;
+  let lastFinish = "";
 
   for (let step = 0; step < MAX_STEPS; step++) {
     let res: Awaited<ReturnType<AiClient["chat"]>>;
@@ -395,6 +397,8 @@ export async function handleCustomerMessage(
       outage = e;
       break;
     }
+    stepsUsed = step + 1;
+    lastFinish = res.finish_reason ?? "";
 
     if (!res.tool_calls || res.tool_calls.length === 0) {
       const reply = (res.content ?? "").trim();
@@ -446,15 +450,18 @@ export async function handleCustomerMessage(
     }
   }
 
-  const persona = await loadPersona(req.userId).catch(() => null);
   // Model outage: NEVER answer with a chatty fallback — that either leaks
   // the machinery ("trouble on my end") or pretends all is well. Throw so the
   // caller stays silent toward the customer and files an owner alert instead.
   if (outage) throw new ModelOutageError(outage);
-  return (
-    persona?.greeting ||
-    "Hello! I had a little trouble just now — please say that again."
+  // The loop died WITHOUT an answer (steps exhausted or empty content, e.g.
+  // a length cutoff). NEVER return the greeting here — a greeting in reply
+  // to a real question looks like the bot only knows hello. Log the trail
+  // for the Render logs and ask an honest clarifying question instead.
+  console.error(
+    `Assistant run produced no reply after ${stepsUsed} step(s) (last finish_reason=${lastFinish || "?"}) for chat ${req.customerJid}: asking for clarification instead.`,
   );
+  return "Sorry, that one no clear — which phone are you asking about? Give me a name or budget and I go show you options with pictures."
 }
 
 /**
