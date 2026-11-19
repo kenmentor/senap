@@ -30,3 +30,16 @@ Written on the dashboard Home cleanup (ui-ux skill, branch U, "just build it").
   tap is stored in `dashboard-home-sections` and always wins afterwards.
 - No new copy, no logic/data changes: hiding is by relevance, counts and
   summaries are the existing strings.
+
+## Follow-up: first-run gate on every tab
+
+- New shared gate `components/dashboard/needs-line.tsx`: `useHasLine()`
+  (`/api/accounts`, fail-open to `true` so a DB blip never locks anyone out)
+  + `NeedsLineGate` card reusing the Home journey strings
+  ("Link your WhatsApp", "Scan once — she replies from your number").
+- Wired into Agent, Groups, Products, Store, Plugins, Settings: confirmed
+  zero lines renders only the gate. While unknown, the real UI renders
+  (no blank flash, no lockout). Link and Home keep their own logic.
+- Still untouched (density for later): the Agent persona editor, Settings
+  sections, and the Groups activate modal are heavy even for linked users —
+  candidates for progressive disclosure next.

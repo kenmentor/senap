@@ -11,6 +11,7 @@ import {
   SiYoutube, SiShopify, SiStripe
 } from "react-icons/si";
 import { FaSlack } from "react-icons/fa";
+import { NeedsLineGate, useHasLine } from "@/components/dashboard/needs-line";
 
 type Tool = { id: string; name: string; desc: string; cat: string; icon: LucideIcon; brand: IconType | null; tint: string; perms: string[] };
 type Connected = { id: string; toolId: string; account: string; enabled: boolean; lastUsed: string; grants?: boolean[] };
@@ -43,6 +44,7 @@ const toolById = (id: string) => TOOLS.find((t) => t.id === id)!;
 
 export default function PluginsPage() {
   const [connected, setConnected] = useState<Connected[]>([]);
+  const hasLine = useHasLine();
 
   useEffect(() => {
     (async () => {
@@ -138,6 +140,8 @@ export default function PluginsPage() {
     setConnected((v) => v.filter((c) => c.id !== id));
     if (detailId === id) setDetailId(null);
   };
+
+  if (hasLine === false) return <NeedsLineGate />;
 
   return (
     <div>

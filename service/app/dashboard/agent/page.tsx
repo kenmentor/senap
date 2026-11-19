@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { UserRound, Bot, Sparkles, CaseSensitive, Save, Clock3, Plus, ArrowLeft, Check, Hand, Tag, BellOff, AlertTriangle, Languages, Moon, ShieldCheck, Package, Briefcase, HeartHandshake, Truck, Send, ChevronLeft, ChevronRight, Zap, QrCode, MessageCircle, type LucideIcon } from "lucide-react";
 import ChatAccess from "./chat-access";
+import { NeedsLineGate, useHasLine } from "@/components/dashboard/needs-line";
 
 const EX_CUSTOMER_DEFAULT = "Do you still have the Tecno Spark 20?";
 const EX_REPLY_DEFAULT = "Yes — 12 left at ₦155,000 each! How many should I reserve for you?";
@@ -126,6 +127,7 @@ export default function AgentPage() {
   const [activeBox, setActiveBox] = useState<"acts" | "never">("acts");
   const [agentAccounts, setAgentAccounts] = useState<{ id: string; number: string; engineId?: string }[]>([]);
   const [agentAccount, setAgentAccount] = useState("");
+  const hasLine = useHasLine();
   const [lineAvatars, setLineAvatars] = useState<Record<string, string | null>>({});
   const [messages, setMessages] = useState<Msg[]>([]);
   const [draft, setDraft] = useState("");
@@ -476,6 +478,8 @@ export default function AgentPage() {
       setMessages((m) => [...m.filter((x) => x.from !== "typing"), { id: msgId.current++, from: "her", text: voiceWrap(brainReply(text), personality) }]);
     }, 900);
   };
+
+  if (hasLine === false) return <NeedsLineGate />;
 
   if (!detailOpen) {
     const switchAccount = (id: string) => {

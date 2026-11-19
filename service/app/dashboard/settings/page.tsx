@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Building2, Bell, Users, CreditCard, Database, TriangleAlert, Download, Plus, Crown, ShieldCheck } from "lucide-react";
 import ConfirmDialog from "@/components/ui/confirm-dialog";
+import { NeedsLineGate, useHasLine } from "@/components/dashboard/needs-line";
 
 type Biz = { name: string; owner: string; phone: string; currency: string; timezone: string; address: string };
 type Notif = { orders: boolean; approvals: boolean; daily: boolean; lowStock: boolean; marketing: boolean; sms: boolean };
@@ -61,6 +62,7 @@ export default function SettingsPage() {
   const [otpCode, setOtpCode] = useState("");
   const [otpSent, setOtpSent] = useState(false);
   const [otpBusy, setOtpBusy] = useState(false);
+  const hasLine = useHasLine();
 
   useEffect(() => {
     (async () => {
@@ -168,6 +170,8 @@ export default function SettingsPage() {
   };
 
   const planPrice = plan === "Starter" ? "Free" : plan === "Growth" ? "₦4,500/mo" : "₦12,000/mo";
+
+  if (hasLine === false) return <NeedsLineGate />;
 
   return (
     <div className="max-w-[720px]">

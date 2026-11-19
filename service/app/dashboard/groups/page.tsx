@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Users, RefreshCw, Crown, ChevronDown, Bot, X, Power } from "lucide-react";
+import { NeedsLineGate, useHasLine } from "@/components/dashboard/needs-line";
 
 type Group = {
   jid: string;
@@ -100,6 +101,7 @@ export default function GroupsPage() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [disabling, setDisabling] = useState<string | null>(null);
+  const hasLine = useHasLine();
 
   useEffect(() => {
     (async () => {
@@ -287,6 +289,8 @@ export default function GroupsPage() {
   };
 
   const modalGroup = modalJid ? groups.find((g) => g.jid === modalJid) : undefined;
+
+  if (hasLine === false) return <NeedsLineGate />;
 
   return (
     <div>

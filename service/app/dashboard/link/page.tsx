@@ -38,6 +38,23 @@ function initialsOf(s: string): string {
   return d.slice(-2) || "•";
 }
 
+/** Real WhatsApp profile photo with initials fallback. Fetched once per
+ *  line via /api/line-avatar (server resolves the line's own JID). */
+function LineAvatar({ number, url }: { number: string; url?: string | null }) {
+  const [broken, setBroken] = useState(false);
+  const show = !!url && url.startsWith("http") && !broken;
+  return (
+    <span className="relative flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full text-[13px] font-bold" style={{ background: "rgba(0,168,132,0.14)", color: "#00d19f", border: "1px solid rgba(0,168,132,0.4)" }}>
+      {show ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={url as string} alt="" draggable={false} onError={() => setBroken(true)} className="absolute inset-0 h-full w-full object-cover" />
+      ) : (
+        initialsOf(number)
+      )}
+    </span>
+  );
+}
+
 /** Short country list — the full dial list lives behind the same select. */
 const COUNTRY_CODES = [
   { cc: "234", label: "Nigeria +234" },
@@ -77,6 +94,9 @@ export default function LinkPage() {
   const [pairBusy, setPairBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [states, setStates] = useState<Record<string, EngineState>>({});
+  const [avatars, setAvatars] = useState<Record<string, string | null>>({});
+  const avatarsRef = useRef<Record<string, string | null>>({});
+  const avatarFetchingRef = useRef<Set<string>>(new Set());
   const [serverUp, setServerUp] = useState(true);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -123,6 +143,28 @@ export default function LinkPage() {
     })();
   }, []);
 
+  // One photo fetch per line (only while connected — that guarantees the
+  // agent knows the line's own JID). Failures aren't cached, so the next
+  // poll retries; a genuine "no photo" caches as null.
+  const ensureAvatar = (id: string) => {
+    if (!id || avatarsRef.current[id] !== undefined || avatarFetchingRef.current.has(id)) return;
+    avatarFetchingRef.current.add(id);
+    fetch(`/api/line-avatar?line=${encodeURIComponent(id)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d) return; // unreachable — retry next poll
+        const url = typeof d?.url === "string" && d.url.startsWith("http") ? (d.url as string) : null;
+        avatarsRef.current[id] = url;
+        setAvatars((v) => ({ ...v, [id]: url }));
+      })
+      .catch(() => {
+        /* unreachable — retry next poll */
+      })
+      .finally(() => {
+        avatarFetchingRef.current.delete(id);
+      });
+  };
+
   // One poll loop: every live line, every 5s. Sets the single server flag.
   useEffect(() => {
     let cancelled = false;
@@ -148,6 +190,9 @@ export default function LinkPage() {
       if (cancelled) return;
       setServerUp(ok || accounts.every((a) => a.unlinked || !engineIdOf(a)));
       setStates((prev) => ({ ...prev, ...next }));
+      for (const [id, st] of Object.entries(next)) {
+        if (st.connected) ensureAvatar(id);
+      }
     };
     poll();
     const t = window.setInterval(poll, 5000);
@@ -456,9 +501,7 @@ export default function LinkPage() {
           return (
             <div key={a.id} className="rounded-2xl p-4" style={{ border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.025)" }}>
               <Link href={`/dashboard/agent?account=${encodeURIComponent(id)}`} className="flex items-center gap-3 rounded-xl">
-                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[13px] font-bold" style={{ background: "rgba(0,168,132,0.14)", color: "#00d19f", border: "1px solid rgba(0,168,132,0.4)" }}>
-                  {initialsOf(a.number)}
-                </span>
+                <LineAvatar number={a.number} url={avatars[id]} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[14.5px] font-semibold" style={{ color: "#e9edef" }}>{a.number}</span>
                   <span className="mt-0.5 flex items-center gap-1.5 text-[12px]" style={{ color: "#8a949b" }}>

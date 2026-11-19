@@ -5,6 +5,7 @@ import Link from "next/link";
 import QRCode from "react-qr-code";
 import { Store, Copy, Check, ExternalLink, Package, AlertTriangle, Save, Pencil, ImagePlus, Trash2, Loader2 } from "lucide-react";
 import { cleanSlug } from "@/lib/store";
+import { NeedsLineGate, useHasLine } from "@/components/dashboard/needs-line";
 
 type Biz = { name: string; phone: string };
 type Prod = { id: string; name: string; quantity: number };
@@ -24,6 +25,7 @@ export default function StorePage() {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const hasLine = useHasLine();
 
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   const liveSlug = savedSlug || "shop";
@@ -162,6 +164,8 @@ export default function StorePage() {
     ],
     [products.length, inStock, outCount],
   );
+
+  if (hasLine === false) return <NeedsLineGate />;
 
   return (
     <div className="mx-auto w-full max-w-[720px]">

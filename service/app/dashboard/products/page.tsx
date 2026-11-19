@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Search, Plus, Pencil, Trash2, X, Package, ChevronLeft, ChevronDown, RefreshCw, Megaphone, Camera, Upload } from "lucide-react";
 import { VIEWS, formatUpdated, lowCount, statusOf, thumbFor, LOW_AT, type Item } from "@/lib/demo/catalog";
 import { isVideoUrl } from "@/lib/store";
+import { NeedsLineGate, useHasLine } from "@/components/dashboard/needs-line";
 
 type Draft = { name: string; sku: string; unitPrice: string; quantity: string; category: string; condition: string; description: string; image: string };
 
@@ -28,6 +29,7 @@ export default function ProductsPage() {
   const [condFilter, setCondFilter] = useState("All");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeImg, setActiveImg] = useState(0);
+  const hasLine = useHasLine();
 
   const load = async () => {
     setLoading(true);
@@ -275,6 +277,8 @@ export default function ProductsPage() {
       window.alert("Couldn't delete — is MongoDB running?");
     }
   };
+
+  if (hasLine === false) return <NeedsLineGate />;
 
   return (
     <div>
