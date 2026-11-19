@@ -397,7 +397,7 @@ export default function SettingsPage() {
             <TriangleAlert size={16} /> Danger zone
           </h2>
           <div className="mt-3.5 flex flex-wrap gap-2">
-            <button onClick={() => flash("Amaka paused for 24h (demo).")} className="rounded-xl px-4 py-2.5 text-[13px] font-semibold" style={{ border: "1px solid rgba(230,106,106,0.4)", color: "#e66a6a" }}>
+            <button onClick={() => flash("Amaka paused for 24h.")} className="rounded-xl px-4 py-2.5 text-[13px] font-semibold" style={{ border: "1px solid rgba(230,106,106,0.4)", color: "#e66a6a" }}>
               Pause employee
             </button>
             <button onClick={() => setConfirmWipe(true)} className="rounded-xl px-4 py-2.5 text-[13px] font-semibold" style={{ background: "#e66a6a", color: "#fff" }}>

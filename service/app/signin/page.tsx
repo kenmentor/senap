@@ -46,6 +46,8 @@ function SigninForm() {
   const [stage, setStage] = useState<"idle" | "redirecting" | "completing">("idle");
   const [error, setError] = useState<string | null>(null);
   const redirectTimer = useRef<number | null>(null);
+  // Single flight: popup path and observer path must never exchange twice.
+  const busyRef = useRef(false);
 
   // Safety net: if Google neither opens nor returns within 12s, hand the
   // button back with a plain message instead of hanging on a spinner.
@@ -73,27 +75,6 @@ function SigninForm() {
       .then((r) => r.json())
       .then((d) => setServerReady(typeof d.configured === "boolean" ? d.configured : null))
       .catch(() => setServerReady(null));
-    let done = false;
-    const finish = async (idToken: string, to: string) => {
-      if (done) return;
-      done = true;
-      setStage("completing");
-      try {
-        const res = await fetch("/api/auth/firebase", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ idToken }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || "Something went wrong.");
-        router.push(to);
-        router.refresh();
-      } catch (e) {
-        done = false;
-        setStage("idle");
-        setError(e instanceof Error ? e.message : "Something went wrong.");
-      }
-    };
     // 1) Redirect errors surface here (account-exists, unauthorized domain…).
     awaitRedirectResult()
       .then((r) => {
@@ -124,7 +105,29 @@ function SigninForm() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const finish = async (idToken: string, to: string) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setStage("completing");
+    try {
+      const res = await fetch("/api/auth/firebase", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idToken }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Something went wrong.");
+      router.push(to);
+      router.refresh();
+    } catch (e) {
+      busyRef.current = false;
+      setStage("idle");
+      setError(e instanceof Error ? e.message : "Something went wrong.");
+    }
+  };
+
   const go = async () => {
+    if (busyRef.current) return;
     if (!firebaseConfigured()) {
       setError("Google sign-in isn't set up yet.");
       return;
@@ -134,17 +137,8 @@ function SigninForm() {
     try {
       const started = await beginGoogleSignIn(dest);
       if ("idToken" in started) {
-        // Popup path resolves right here — no redirect involved.
-        setStage("completing");
-        const res = await fetch("/api/auth/firebase", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ idToken: started.idToken }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || "Something went wrong.");
-        router.push(started.next);
-        router.refresh();
+        // Popup path resolves right here — single-flight guarded like the rest.
+        await finish(started.idToken, started.next);
         return;
       }
       // Redirect path: the page navigates away. If we're still here the

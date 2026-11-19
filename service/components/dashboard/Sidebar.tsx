@@ -38,6 +38,14 @@ export default function Sidebar() {
 
   const signOut = async () => {
     await fetch("/api/auth/signout", { method: "POST" }).catch(() => {});
+    // Drop the Firebase Google session too — otherwise the next visit to
+    // /signin silently re-authenticates behind the user's back.
+    try {
+      const { firebaseSignOut } = await import("@/lib/firebase-client");
+      await firebaseSignOut();
+    } catch {
+      /* best effort */
+    }
     router.push("/signin");
     router.refresh();
   };

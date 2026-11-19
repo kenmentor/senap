@@ -31,9 +31,9 @@ export default function Page() {
             </a>
           </div>
         </header>
-        <HeroBanner />
         <IntroSections />
         <ScrollStory />
+        <HeroBanner />
         <NextSection />
         <section className="flex min-h-[100svh] w-full flex-col items-center justify-center px-6 py-24 text-center">
           <p className="text-sm font-bold uppercase" style={{ letterSpacing: "0.24em", color: "#00a884" }}>

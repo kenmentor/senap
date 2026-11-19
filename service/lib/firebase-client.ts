@@ -131,6 +131,29 @@ export function subscribeGoogleUser(cb: (user: User) => void): () => void {
   });
 }
 
+/**
+ * Sign out everywhere: drops the Firebase Google session (plus stored
+ * next-link/email leftovers) so the next visit can't silently re-authenticate
+ * behind the user's back. Never throws — call it alongside the API signout.
+ */
+export async function firebaseSignOut(): Promise<void> {
+  try {
+    const a = getClientAuth();
+    if (a) {
+      const { signOut } = await import("firebase/auth");
+      await signOut(a);
+    }
+  } catch {
+    /* best effort */
+  }
+  try {
+    window.localStorage.removeItem(NEXT_KEY);
+    window.localStorage.removeItem("senap-email-draft");
+  } catch {
+    /* ignore */
+  }
+}
+
 function codeOf(e: unknown): string {
   return typeof e === "object" && e !== null && "code" in e ? String((e as { code: unknown }).code) : "";
 }
