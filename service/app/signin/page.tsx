@@ -43,6 +43,7 @@ function SigninForm() {
   const dest = next && next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard";
   const [missingKeys, setMissingKeys] = useState<string[]>([]);
   const [serverIssue, setServerIssue] = useState<null | "missing" | "invalid">(null);
+  const [serverDetail, setServerDetail] = useState<string | null>(null);
   const [stage, setStage] = useState<"idle" | "redirecting" | "completing">("idle");
   const [error, setError] = useState<string | null>(null);
   const redirectTimer = useRef<number | null>(null);
@@ -74,9 +75,20 @@ function SigninForm() {
     fetch("/api/auth/firebase")
       .then((r) => r.json())
       .then((d) => {
-        if (d.configured === true) setServerIssue(null);
-        else if (d.reason === "invalid" || d.reason === "missing") setServerIssue(d.reason);
-        else setServerIssue(null);
+        if (d.configured === true) {
+          setServerIssue(null);
+          setServerDetail(null);
+        } else if (d.reason === "invalid" || d.reason === "missing") {
+          setServerIssue(d.reason);
+          // detail/hint are sanitized server-side (no key material).
+          const bits = [d.detail, d.hint].filter(
+            (x): x is string => typeof x === "string" && x.length > 0,
+          );
+          setServerDetail(bits.length > 0 ? bits.join(": ") : null);
+        } else {
+          setServerIssue(null);
+          setServerDetail(null);
+        }
       })
       .catch(() => setServerIssue(null));
     // 1) Redirect errors surface here (account-exists, unauthorized domain…).
@@ -185,7 +197,9 @@ function SigninForm() {
 
       {missingKeys.length === 0 && serverIssue === "invalid" && (
         <p className="mt-3 rounded-xl p-3 text-[12px]" style={{ background: "rgba(232,180,91,0.08)", color: "#e8b45b", border: "1px solid rgba(232,180,91,0.3)" }}>
-          App keys are fine — the server key is present but invalid. Re-paste the full one-line service-account JSON, then restart or redeploy.
+          App keys are fine — the server key is present but invalid.
+          {serverDetail ? ` (${serverDetail}) ` : " "}
+          Re-paste the full one-line service-account JSON, then restart or redeploy.
         </p>
       )}
 

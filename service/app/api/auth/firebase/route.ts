@@ -42,7 +42,12 @@ function underLimit(key: string, limit: number, windowMs: number): boolean {  co
 /** Liveness probe for the sign-in card: is the server key present and valid? No secrets leak. */
 export async function GET() {
   const status = await adminStatus();
-  return NextResponse.json({ configured: status.ready, reason: status.ready ? undefined : status.reason });
+  return NextResponse.json({
+    configured: status.ready,
+    reason: status.ready ? undefined : status.reason,
+    detail: status.ready ? undefined : status.detail,
+    hint: status.ready ? undefined : status.hint,
+  });
 }
 
 export async function POST(req: Request) {
@@ -67,9 +72,9 @@ export async function POST(req: Request) {
       const status = await adminStatus();
       const why =
         status.reason === "invalid"
-          ? "the service key is present but invalid (not usable JSON/credentials)"
+          ? `the service key is present but invalid${status.detail ? ` (${status.detail}${status.hint ? `: ${status.hint}` : ""})` : ""}`
           : "the service key is missing";
-      console.error(`[api/auth/firebase] admin SDK not ready: ${status.reason ?? "unknown"}`);
+      console.error(`[api/auth/firebase] admin SDK not ready: ${status.detail ?? status.reason ?? "unknown"}${status.hint ? ` — ${status.hint}` : ""}`);
       return NextResponse.json(
         { error: `Email sign-in isn't set up on the server yet — ${why}.`, code: "server-misconfigured" },
         { status: 503 },
