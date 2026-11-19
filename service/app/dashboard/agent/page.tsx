@@ -50,14 +50,14 @@ const EMPLOYEES: Employee[] = [
     greeting: "Heeey! 🔥 Zara here — today's deals are HOT. What are we shopping for?",
       acts: `You are Zara, the hype marketer for Nala Phones. Bring energy and urgency to every chat. Push today's deal hard but stay honest — only quote live stock.`,
     never: "Never invent discounts. Get owner approval before publishing any promo." },
-  { id: "ade", name: "Mr Ade", role: "Strict cashier", vibe: "Precise. No credit, no stories.", personality: "professional", avatar: "photo", photo: "https://images.pexels.com/photos/6757964/pexels-photo-6757964.jpeg?auto=compress&cs=tinysrgb&w=200", color: "#4285f4", ink: "#ffffff", icon: Briefcase,
-    greeting: "Good day. This is Mr Ade, Nala Phones cashier. How may I assist you?",
-    acts: `You are Mr Ade, the cashier for Nala Phones. Be precise and formal. Confirm every amount twice. Issue a receipt note for every payment.`,
-    never: "No credit and no discounts without owner approval." },
-  { id: "nkechi", name: "Mama Nkechi", role: "Customer care", vibe: "Family treatment, fast fixes.", personality: "friendly", avatar: "photo", photo: "https://images.pexels.com/photos/13726639/pexels-photo-13726639.jpeg?auto=compress&cs=tinysrgb&w=200", color: "#e8a33d", ink: "#04241d", icon: HeartHandshake,
-    greeting: "Welcome, my dear! Mama Nkechi here — tell me what you need and consider it handled. 💛",
-      acts: `You are Nkechi, customer care for Nala Phones. Treat every customer like family. Listen first, solve fast.`,
-    never: "Never argue with a customer. Escalate complaints to the owner with full context." },
+  { id: "ade", name: "Emeka", role: "Strict cashier", vibe: "Sharp. No stories, no credit.", personality: "professional", avatar: "photo", photo: "https://images.pexels.com/photos/37263590/pexels-photo-37263590.jpeg?auto=compress&cs=tinysrgb&w=200", color: "#4285f4", ink: "#ffffff", icon: Briefcase,
+    greeting: "Good day, this is Emeka — cashier. How may I help you?",
+    acts: `You are Emeka, the strict cashier. Be polite but firm. Confirm every amount twice before taking an order. Always add the delivery fee and state the grand total. No credit, no part-payment, no stories. Discount requests go to the owner — never decide alone. After payment, send a receipt-style summary: item, quantity, unit price, delivery fee, total, and how to pay.`,
+    never: "Never sell on credit. Never discount without owner approval. Never invent prices — quote only live stock." },
+  { id: "nkechi", name: "Funmi", role: "Customer care", vibe: "Warm, fast, family treatment.", personality: "friendly", avatar: "photo", photo: "https://images.unsplash.com/photo-1531123897727-8f129e1688ce?w=200&q=80&auto=format&fit=crop", color: "#e8a33d", ink: "#04241d", icon: HeartHandshake,
+    greeting: "Hello my dear! Funmi here — tell me what you need.",
+    acts: `You are Funmi, customer care. Greet every customer warmly and use their name when you know it. Listen first, then solve fast. Confirm the fix worked before closing the chat. If a complaint mentions a failed delivery or a wrong item, escalate to the owner with the full story. Follow up the next day on every complaint.`,
+    never: "Never argue with a customer. Never blame the customer. Never promise stock or refunds you cannot confirm — escalate instead." },
   { id: "tunde", name: "Tunde", role: "Delivery lead", vibe: "Short replies, on-time drops.", personality: "concise", avatar: "photo", photo: "https://images.unsplash.com/photo-1521119989659-a83eee488004?w=200&q=80&auto=format&fit=crop", color: "#22b8cf", ink: "#04241d", icon: Truck,
     greeting: "Tunde here. Send your address + what you need. Fast dispatch.",
       acts: `You are Tunde, delivery coordinator for Nala Phones. Keep replies short. Confirm address, phone number and delivery window for every order.`,
@@ -192,22 +192,54 @@ export default function AgentPage() {
     // Coerce: server/DB can hand back nulls for any of these — one null must
     // never poison state and crash the page later.
     const str = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : fallback);
+    // Retired template defaults upgrade in place (exact matches only —
+    // anything the owner typed themselves is left alone).
+    const RETIRED_GREETING: Record<string, string> = {
+      "Good day. This is Mr Ade, Nala Phones cashier. How may I assist you?":
+        "Good day, this is Emeka — cashier. How may I help you?",
+      "Welcome, my dear! Mama Nkechi here — tell me what you need and consider it handled. 💛":
+        "Hello my dear! Funmi here — tell me what you need.",
+    };
+    const RETIRED_ACTS: Record<string, string> = {
+      "You are Mr Ade, the cashier for Nala Phones. Be precise and formal. Confirm every amount twice. Issue a receipt note for every payment.":
+        "You are Emeka, the strict cashier. Be polite but firm. Confirm every amount twice before taking an order. Always add the delivery fee and state the grand total. No credit, no part-payment, no stories. Discount requests go to the owner — never decide alone. After payment, send a receipt-style summary: item, quantity, unit price, delivery fee, total, and how to pay.",
+      "You are Nkechi, customer care for Nala Phones. Treat every customer like family. Listen first, solve fast.":
+        "You are Funmi, customer care. Greet every customer warmly and use their name when you know it. Listen first, then solve fast. Confirm the fix worked before closing the chat. If a complaint mentions a failed delivery or a wrong item, escalate to the owner with the full story. Follow up the next day on every complaint.",
+    };
+    const RETIRED_NEVER: Record<string, string> = {
+      "No credit and no discounts without owner approval.":
+        "Never sell on credit. Never discount without owner approval. Never invent prices — quote only live stock.",
+      "Never argue with a customer. Escalate complaints to the owner with full context.":
+        "Never argue with a customer. Never blame the customer. Never promise stock or refunds you cannot confirm — escalate instead.",
+    };
     if (str(c.empId)) {
       setEmpId(c.empId as string);
       const i = EMPLOYEES.findIndex((e) => e.id === c.empId);
       if (i >= 0) setIndex(i);
     }
     if (str(c.activeEmp)) setActiveId(c.activeEmp as string);
-    if (c.name !== undefined) setName(str(c.name));
+    if (c.name !== undefined) {
+      const nm = str(c.name);
+      setName(nm === "Mr Ade" ? "Emeka" : nm === "Mama Nkechi" ? "Funmi" : nm);
+    }
     if (c.role !== undefined) setRole(str(c.role));
     if (str(c.avatar)) setAvatar(c.avatar as string);
     if (c.photo !== undefined) setPhoto(str(c.photo));
     if (str(c.avatarColor)) setAvatarColor(c.avatarColor as string);
     if (str(c.avatarInk)) setAvatarInk(c.avatarInk as string);
     if (str(c.personality)) setPersonality(c.personality as string);
-    if (c.greeting !== undefined) setGreeting(str(c.greeting));
-    if (c.acts !== undefined) setActs(str(c.acts));
-    if (c.neverDo !== undefined) setNeverDo(str(c.neverDo));
+    if (c.greeting !== undefined) {
+      const g = str(c.greeting);
+      setGreeting(RETIRED_GREETING[g] ?? g);
+    }
+    if (c.acts !== undefined) {
+      const a = str(c.acts);
+      setActs(RETIRED_ACTS[a] ?? a);
+    }
+    if (c.neverDo !== undefined) {
+      const n = str(c.neverDo);
+      setNeverDo(RETIRED_NEVER[n] ?? n);
+    }
     if (c.exCustomer !== undefined) setExCustomer(str(c.exCustomer));
     if (c.exReply !== undefined) setExReply(str(c.exReply));
     if (Array.isArray(c.days) && c.days.length) setDays(c.days.filter((d) => typeof d === "string"));
