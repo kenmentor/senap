@@ -194,16 +194,16 @@ function SigninForm() {
       <button
         onClick={go}
         disabled={stage !== "idle"}
-        className="mt-5 flex min-h-[52px] w-full items-center justify-center gap-3 rounded-none text-[15px] font-bold tracking-wide transition active:scale-[0.99] disabled:opacity-70"
-        style={{ background: "#00a884", color: "#04241d" }}
+        className="btn-google mt-5 flex min-h-[52px] w-full items-center justify-center gap-3 text-[15px] font-semibold transition active:scale-[0.99] disabled:opacity-70"
+        style={{ background: "#ffffff", color: "#1f1f1f" }}
       >
         {stage === "idle" ? (
           <>
-            <GoogleMark size={20} /> <span>CONTINUE WITH GOOGLE</span>
+            <GoogleMark size={20} /> <span>Sign in with Google</span>
           </>
         ) : (
           <>
-            <Loader2 size={18} className="animate-spin" /> {stage === "completing" ? "SIGNING YOU IN…" : "OPENING GOOGLE…"}
+            <Loader2 size={18} className="animate-spin" /> {stage === "completing" ? "Signing you in…" : "Opening Google…"}
           </>
         )}
       </button>
