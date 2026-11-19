@@ -62,21 +62,12 @@ function loadNext(fallback: string): string {
   }
 }
 
-function isMobileBrowser(): boolean {
-  try {
-    return /android|iphone|ipad|ipod|mobile/i.test(window.navigator.userAgent);
-  } catch {
-    return false;
-  }
-}
-
 export type GoogleStart = { idToken: string; next: string } | { redirected: true };
 
 /**
- * Popup first (the only flow that works on localhost and desktops), redirect
- * fallback for mobile browsers that block popups. Redirect on localhost is a
- * documented Firebase limitation — popup is the local path, redirect is the
- * production-mobile path.
+ * Popup first on every platform (redirect dies silently in partitioned mobile
+ * browsers when hosted off Firebase Hosting). Redirect stays only as the
+ * fallback for environments where popups are blocked.
  */
 export async function beginGoogleSignIn(next: string): Promise<GoogleStart> {
   const a = getClientAuth();
@@ -95,21 +86,19 @@ export async function beginGoogleSignIn(next: string): Promise<GoogleStart> {
       /* private mode — diagnosis hint just won't show */
     }
   };
-  if (isMobileBrowser()) {
-    markRedirect();
-    await signInWithRedirect(a, provider);
-    return { redirected: true };
-  }
   try {
     const cred = await signInWithPopup(a, provider);
     return { idToken: await cred.user.getIdToken(), next: loadNext(next) };
-    } catch (e) {
-      const code = codeOf(e);
-      if (code.includes("auth/popup-blocked")) {
-        markRedirect();
-        await signInWithRedirect(a, provider);
-        return { redirected: true };
-      }
+  } catch (e) {
+    const code = codeOf(e);
+    if (
+      code.includes("auth/popup-blocked") ||
+      code.includes("auth/operation-not-supported-in-this-environment")
+    ) {
+      markRedirect();
+      await signInWithRedirect(a, provider);
+      return { redirected: true };
+    }
     throw new Error(friendlyAuthError(e));
   }
 }
