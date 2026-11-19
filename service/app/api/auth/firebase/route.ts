@@ -24,8 +24,7 @@ function nameFromEmail(email: string): string {
 }
 
 const hits = new Map<string, number[]>();
-function underLimit(key: string, limit: number, windowMs: number): boolean {
-  const now = Date.now();
+function underLimit(key: string, limit: number, windowMs: number): boolean {  const now = Date.now();
   const recent = (hits.get(key) ?? []).filter((t) => now - t < windowMs);
   if (recent.length >= limit) {
     hits.set(key, recent);
@@ -38,6 +37,12 @@ function underLimit(key: string, limit: number, windowMs: number): boolean {
     for (const k of keys) hits.delete(k);
   }
   return true;
+}
+
+/** Liveness probe for the sign-in card: is the server key present and valid? No secrets leak. */
+export async function GET() {
+  const status = await adminStatus();
+  return NextResponse.json({ configured: status.ready });
 }
 
 export async function POST(req: Request) {

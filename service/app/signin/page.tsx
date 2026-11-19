@@ -42,11 +42,16 @@ function SigninForm() {
   const next = search.get("next");
   const dest = next && next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard";
   const [missingKeys, setMissingKeys] = useState<string[]>([]);
+  const [serverReady, setServerReady] = useState<boolean | null>(null);
   const [stage, setStage] = useState<"idle" | "redirecting" | "completing">("idle");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setMissingKeys(missingFirebaseKeys());
+    fetch("/api/auth/firebase")
+      .then((r) => r.json())
+      .then((d) => setServerReady(typeof d.configured === "boolean" ? d.configured : null))
+      .catch(() => setServerReady(null));
     let done = false;
     const finish = async (idToken: string, to: string) => {
       if (done) return;
@@ -150,6 +155,12 @@ function SigninForm() {
       {missingKeys.length > 0 && (
         <p className="mt-3 rounded-xl p-3 text-[12px]" style={{ background: "rgba(232,180,91,0.08)", color: "#e8b45b", border: "1px solid rgba(232,180,91,0.3)" }}>
           Google sign-in is unavailable: missing {missingKeys.join(", ")}.
+        </p>
+      )}
+
+      {missingKeys.length === 0 && serverReady === false && (
+        <p className="mt-3 rounded-xl p-3 text-[12px]" style={{ background: "rgba(232,180,91,0.08)", color: "#e8b45b", border: "1px solid rgba(232,180,91,0.3)" }}>
+          App keys are fine — the server still needs its service key. Local: paste it into .env.local and restart. Live site: add it in Render and redeploy.
         </p>
       )}
 
