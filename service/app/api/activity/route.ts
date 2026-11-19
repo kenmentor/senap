@@ -190,27 +190,97 @@ export async function GET() {
   ]);
   // The agent doesn't know dashboard owners — filter its global feed to my lines.
   const allChats = (recent as { chats?: unknown } | null)?.chats;
-  const chats = (Array.isArray(allChats) ? allChats : []).filter((c) => {
+  let chats = (Array.isArray(allChats) ? allChats : []).filter((c) => {
     const line = (c as { userId?: unknown })?.userId;
     return typeof line === "string" && lineSet.has(line);
   });
 
-  // Tool usage is per line on the agent — merge my lines' counts.
-  const toolTotals = new Map<string, number>();
-  await Promise.all(
-    lines.map(async (line) => {
-      const t = (await agentGet(`/sessions/tools?userId=${encodeURIComponent(line)}`)) as {
-        tools?: { name?: unknown; count?: unknown }[];
-      } | null;
-      const list = Array.isArray(t?.tools) ? t!.tools! : [];
-      for (const row of list) {
-        const name = String(row?.name ?? "");
-        if (!name) continue;
-        toolTotals.set(name, (toolTotals.get(name) ?? 0) + Number(row?.count ?? 0));
-      }
-    }),
-  );
-  const toolList = Array.from(toolTotals.entries()).map(([name, count]) => ({ name, count }));
+  // Durable tool ranking from Mongo (the agent logs every call there with a
+  // 90-day TTL). Live agent counts die with a restart, so the persisted
+  // ledger is the source of truth — the agent is only a fallback.
+  let toolList: { name: string; count: number }[] = [];
+  try {
+    await dbConnect();
+    const since7 = new Date(Date.now() - 7 * 24 * 60 * 60_000);
+    const rows = (await ToolUseView.aggregate([
+      { $match: { userId: { $in: lines }, at: { $gte: since7 } } },
+      { $group: { _id: "$name", count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 10 },
+    ]).catch(() => [] as unknown[])) as { _id?: unknown; count?: unknown }[];
+    toolList = rows
+      .map((r) => ({ name: String(r?._id ?? "unknown"), count: Number(r?.count ?? 0) }))
+      .filter((t) => t.name && t.count > 0);
+  } catch {
+    toolList = [];
+  }
+  if (toolList.length === 0) {
+    // Mongo empty (fresh DB, blip) — merge the agent's live per-line counts.
+    const toolTotals = new Map<string, number>();
+    await Promise.all(
+      lines.map(async (line) => {
+        const t = (await agentGet(`/sessions/tools?userId=${encodeURIComponent(line)}`)) as {
+          tools?: { name?: unknown; count?: unknown }[];
+        } | null;
+        const list = Array.isArray(t?.tools) ? t!.tools! : [];
+        for (const row of list) {
+          const name = String(row?.name ?? "");
+          if (!name) continue;
+          toolTotals.set(name, (toolTotals.get(name) ?? 0) + Number(row?.count ?? 0));
+        }
+      }),
+    );
+    toolList = Array.from(toolTotals.entries()).map(([name, count]) => ({ name, count }));
+  }
+
+  if (chats.length === 0 && lines.length > 0) {
+    // Agent recent-chats are live memory: after a kill or a fresh boot the
+    // list is empty. Rebuild the same feed from the persisted chat ledger
+    // so history survives any restart. Names/photos refill on next connect.
+    try {
+      await dbConnect();
+      const rows = (await MemoryView.aggregate([
+        { $match: { userId: { $in: lines } } },
+        { $sort: { ts: 1 } },
+        {
+          $group: {
+            _id: "$chatJid",
+            userId: { $last: "$userId" },
+            text: { $last: "$content" },
+            role: { $last: "$role" },
+            ts: { $last: "$ts" },
+            messages: { $sum: 1 },
+          },
+        },
+        { $sort: { ts: -1 } },
+        { $limit: 20 },
+      ]).catch(() => [] as unknown[])) as {
+        _id?: unknown;
+        userId?: unknown;
+        text?: unknown;
+        role?: unknown;
+        ts?: unknown;
+        messages?: unknown;
+      }[];
+      chats = rows.map((r) => {
+        const jid = String(r?._id ?? "");
+        const digits = jid.split("@")[0].replace(/\D/g, "");
+        const at = r?.ts instanceof Date ? r.ts.getTime() : Number(r?.ts ?? 0);
+        return {
+          userId: String(r?.userId ?? ""),
+          jid,
+          name: digits ? `+${digits}` : "unknown",
+          imgUrl: null,
+          text: String(r?.text ?? ""),
+          fromMe: String(r?.role ?? "") !== "user",
+          ts: Number.isFinite(at) ? at : 0,
+          messages: Number(r?.messages ?? 0),
+        };
+      }).filter((c) => c.jid);
+    } catch {
+      /* keep the empty list */
+    }
+  }
 
   let scheduled: unknown[] = [];
   // Model-outage alerts the agent filed while staying silent to customers.
