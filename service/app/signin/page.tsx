@@ -11,6 +11,7 @@ import {
   beginGoogleSignIn,
   awaitRedirectResult,
   subscribeGoogleUser,
+  authErrorCode,
 } from "@/lib/firebase-client";
 
 function GoogleMark({ size = 20 }: { size?: number }) {
@@ -147,7 +148,9 @@ function SigninForm() {
       .catch((e) => {
         clearGiveUp();
         setReturning(false);
-        setError(e instanceof Error ? e.message : "Google sign-in failed — try again.");
+        const code = authErrorCode(e);
+        const base = e instanceof Error ? e.message : "Google sign-in failed — try again.";
+        setError(code ? `${base} (${code})` : base);
       });
     // 2) Observer catches the user even when the redirect handshake yields
     // null (localhost quirk, partitioned storage) — and forwards anyone
@@ -229,7 +232,9 @@ function SigninForm() {
       setError("The Google window was blocked — allow popups/redirects and try again.");
     } catch (e) {
       setStage("idle");
-      setError(e instanceof Error ? e.message : "Google sign-in failed — try again.");
+      const code = authErrorCode(e);
+      const base = e instanceof Error ? e.message : "Google sign-in failed — try again.";
+      setError(code ? `${base} (${code})` : base);
     }
   };
 

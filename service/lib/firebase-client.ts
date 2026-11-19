@@ -156,6 +156,11 @@ function codeOf(e: unknown): string {
   return typeof e === "object" && e !== null && "code" in e ? String((e as { code: unknown }).code) : "";
 }
 
+/** Raw Firebase error code (e.g. auth/unauthorized-domain) for precise reports. */
+export function authErrorCode(e: unknown): string {
+  return codeOf(e);
+}
+
 function friendlyAuthError(e: unknown): string {
   const code = codeOf(e);
   if (code.includes("auth/unauthorized-domain"))
