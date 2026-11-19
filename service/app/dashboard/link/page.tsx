@@ -470,31 +470,15 @@ export default function LinkPage() {
     setSheetOpen(true);
   };
 
-  const connectedCount = accounts.filter((a) => !a.unlinked && states[engineIdOf(a)]?.connected).length;
-  const activeCount = accounts.filter((a) => !a.unlinked).length;
-
   return (
     <div className="mx-auto w-full max-w-[560px]">
-      {/* One status line. If the server is down it says so + what happens next. */}
-      <div className="flex items-center gap-2.5 rounded-2xl p-4" style={{ border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.025)" }}>
-        <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${serverUp ? "" : "animate-pulse"}`} style={{ background: serverUp ? "#00a884" : "#8a949b" }} />
-        <div className="min-w-0">
-          <p className="text-[13.5px] font-semibold" style={{ color: "#e9edef" }}>
-            {serverUp ? `WhatsApp server · Live — ${connectedCount}/${activeCount} connected` : "WhatsApp server · Reconnecting…"}
-          </p>
-          <p className="truncate text-[12px]" style={{ color: "#8a949b" }}>
-            {serverUp ? "Leave it alone — it heals itself every minute." : "Leave this page open — it retries by itself. Expired lines need Relink."}
-          </p>
-        </div>
-      </div>
-
       {actionError && (
-        <p className="mt-3 rounded-xl p-3 text-[12.5px]" style={{ background: "rgba(230,106,106,0.08)", color: "#e66a6a", border: "1px solid rgba(230,106,106,0.3)" }}>
+        <p className="mb-3 rounded-xl p-3 text-[12.5px]" style={{ background: "rgba(230,106,106,0.08)", color: "#e66a6a", border: "1px solid rgba(230,106,106,0.3)" }}>
           {actionError}
         </p>
       )}
 
-      <div className="mt-3 grid gap-3">
+      <div className="grid gap-3">
         {accounts.map((a) => {
           const id = engineIdOf(a);
           const st = statusOf(a, states[id], serverUp);

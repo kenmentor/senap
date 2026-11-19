@@ -108,10 +108,10 @@ function Block({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** Download-the-app nudge — dashboard only (never on the public store).
- *  Shows only when installing is actually possible (real install prompt, or
- *  iOS with manual instructions), max 3 times, until installed or dismissed —
- *  never a permanent nag. */
+/** Download-the-app nudge — dashboard only (sellers, never buyers).
+ *  Shows on every visit until installed (the X hides it for that visit
+ *  only). Shows only when installing is actually possible (real install
+ *  prompt, or iOS with manual instructions). */
 function InstallApp() {
   const [ready, setReady] = useState(false);
   const [deferred, setDeferred] = useState<Event | null>(null);
@@ -120,22 +120,10 @@ function InstallApp() {
   const [isIos, setIsIos] = useState(false);
 
   useEffect(() => {
-    const MAX_SHOWS = 3;
-    const noteShown = (): boolean => {
-      try {
-        const n = parseInt(window.localStorage.getItem("senap-install-shown") ?? "0", 10) || 0;
-        if (n >= MAX_SHOWS) {
-          window.localStorage.setItem("senap-install-dismissed", "1");
-          return false;
-        }
-        window.localStorage.setItem("senap-install-shown", String(n + 1));
-        return true;
-      } catch {
-        return true; // private mode — show this session, hide on reload
-      }
-    };
+    // Sellers only (this is the dashboard — buyers never see it), and only
+    // until installed: no show-cap, no permanent dismiss. The X hides it
+    // for this visit; it returns next visit until the app is installed.
     try {
-      if (window.localStorage.getItem("senap-install-dismissed")) return;
       if (window.localStorage.getItem("senap-installed")) return;
       if (window.matchMedia("(display-mode: standalone)").matches) {
         window.localStorage.setItem("senap-installed", "1");
@@ -152,14 +140,14 @@ function InstallApp() {
     const ios = /iphone|ipad|ipod/i.test(window.navigator.userAgent);
     setIsIos(ios);
     if (ios) {
-      // No install event on iOS — manual Share instructions, capped.
-      if (noteShown()) setReady(true);
+      // No install event on iOS — manual Share instructions, every visit until installed.
+      setReady(true);
       return;
     }
     const onPrompt = (e: Event) => {
       e.preventDefault();
       setDeferred(e);
-      if (noteShown()) setReady(true);
+      setReady(true);
     };
     const markInstalled = () => {
       try {
@@ -180,11 +168,7 @@ function InstallApp() {
   if (!ready) return null;
 
   const dismiss = () => {
-    try {
-      window.localStorage.setItem("senap-install-dismissed", "1");
-    } catch {
-      /* private mode — card just hides for this session */
-    }
+    // Session only — the card returns next visit until the app is installed.
     setReady(false);
   };
 

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { Search, X, Package, MessageCircle, ChevronLeft, MapPin } from "lucide-react";
+import { Search, X, Package, MessageCircle, ChevronLeft } from "lucide-react";
 import { BsPatchCheckFill } from "react-icons/bs";
 import type { Product } from "@/lib/demo/products";
 import { VIEWS, lowCount, statusOf, thumbFor, LOW_AT, type Item } from "@/lib/demo/catalog";
@@ -76,13 +76,9 @@ export default function StoreGrid({
   const [activeImg, setActiveImg] = useState(0);
   const [bannerBroken, setBannerBroken] = useState(false);
 
-  // Banner — custom upload wins, placeholder otherwise (dashboard Store to change).
-  const placeholderUrl = useMemo(
-    () => `https://picsum.photos/seed/${encodeURIComponent((business.name || "senap-store").toLowerCase().replace(/\s+/g, "-"))}/1200/400`,
-    [business.name],
-  );
+  // Banner — custom upload only. No banner = slim gradient strip, never a
+  // stock photo: the products are the hero, the cover just sets the tone.
   const customBanner = ((business as { bannerImage?: unknown }).bannerImage as string | undefined || "").trim();
-  const bannerUrl = customBanner || placeholderUrl;
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -120,13 +116,14 @@ export default function StoreGrid({
       </div>
 
       <div className="relative z-10 mx-auto w-full max-w-[1200px] px-4 sm:px-6">
-        {/* Cover banner — full-bleed top, placeholder image */}
-        <div className="relative -mx-4 overflow-hidden sm:-mx-6" style={{ borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
-          <div className="relative h-52 w-full sm:h-64" style={{ background: "linear-gradient(135deg, #0b3d33 0%, #0e151a 55%, #111b21 100%)" }}>
-            {!bannerBroken && (
+        {/* Channel header, YouTube-compact: slim cover, one avatar row, then
+            straight into search + products. Nothing above the fold but the shop. */}
+        <div className="relative -mx-4 sm:-mx-6" style={{ borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
+          <div className="relative h-20 w-full overflow-hidden sm:h-28" style={{ background: "linear-gradient(135deg, #0b3d33 0%, #0e151a 55%, #111b21 100%)" }}>
+            {customBanner && !bannerBroken && (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={bannerUrl}
+                src={customBanner}
                 alt=""
                 draggable={false}
                 onError={() => setBannerBroken(true)}
@@ -134,55 +131,44 @@ export default function StoreGrid({
                 loading="eager"
               />
             )}
-            <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, rgba(0,0,0,0.05) 0%, rgba(0,0,0,0.55) 100%)" }} />
           </div>
 
-          {/* Shop card overlapping the cover */}
-          <div className="relative px-4 pb-4 sm:px-6" style={{ background: "rgba(17,27,33,0.92)", backdropFilter: "blur(12px)" }}>
-            <div className="-mt-8 flex items-end gap-3.5">
-              <span className="relative flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl text-[22px] font-extrabold sm:h-20 sm:w-20" style={{ background: "#00a884", color: "#04241d", border: "3px solid #111b21" }}>
-                {business.avatarUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={business.avatarUrl} alt={business.name} draggable={false} className="absolute inset-0 h-full w-full object-cover" />
-                ) : (
-                  initialsOf(business.name)
-                )}
-              </span>
-              <div className="min-w-0 flex-1 pb-1">
-                <h1 className="font-display flex items-center gap-2 truncate text-[22px] font-bold leading-tight sm:text-[26px]" style={{ color: "#fff" }}>
-                  <span className="truncate">{business.name}</span>
-                  <BlueTick size={20} />
-                </h1>
-                <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px]" style={{ color: "#8a949b" }}>
-                  {business.address ? (
-                    <span className="flex items-center gap-1 truncate"><MapPin size={12} className="shrink-0" /> {business.address}</span>
-                  ) : (
-                    <span>WhatsApp storefront</span>
-                  )}
-                  <span aria-hidden>·</span>
-                  <span>{products.length} products</span>
-                  <span aria-hidden>·</span>
-                  <span style={{ color: inStockCount > 0 ? "#00d19f" : "#e8b45b" }}>{inStockCount > 0 ? `${inStockCount} in stock` : "Restocking"}</span>
-                </p>
-              </div>
-              {chatHref ? (
-                <a
-                  href={chatHref}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label={`Chat with ${business.name} on WhatsApp`}
-                  className="mb-1 flex h-12 w-12 shrink-0 items-center justify-center rounded-full transition active:scale-95"
-                  style={{ background: "#00a884", color: "#04241d" }}
-                >
-                  <MessageCircle size={22} strokeWidth={2} />
-                </a>
-              ) : null}
+          <div className="flex items-center gap-3 px-4 py-3 sm:px-6" style={{ background: "rgba(17,27,33,0.92)", backdropFilter: "blur(12px)" }}>
+            <span className="relative flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full text-[17px] font-extrabold" style={{ background: "#00a884", color: "#04241d", border: "2px solid #111b21" }}>
+              {business.avatarUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={business.avatarUrl} alt={business.name} draggable={false} className="absolute inset-0 h-full w-full object-cover" />
+              ) : (
+                initialsOf(business.name)
+              )}
+            </span>
+            <div className="min-w-0 flex-1">
+              <h1 className="font-display flex items-center gap-1.5 truncate text-[17px] font-bold leading-tight" style={{ color: "#fff" }}>
+                <span className="truncate">{business.name}</span>
+                <BlueTick size={16} />
+              </h1>
+              <p className="mt-0.5 truncate text-[12px]" style={{ color: "#8a949b" }}>
+                {products.length} products<span aria-hidden> · </span>
+                <span style={{ color: inStockCount > 0 ? "#00d19f" : "#e8b45b" }}>{inStockCount > 0 ? `${inStockCount} in stock` : "Restocking"}</span>
+              </p>
             </div>
+            {chatHref ? (
+              <a
+                href={chatHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={`Chat with ${business.name} on WhatsApp`}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition active:scale-95"
+                style={{ background: "#00a884", color: "#04241d" }}
+              >
+                <MessageCircle size={20} strokeWidth={2} />
+              </a>
+            ) : null}
           </div>
         </div>
 
         {/* Search */}
-        <div className="mt-5 flex flex-wrap items-center gap-3">
+        <div className="mt-3 flex flex-wrap items-center gap-3">
           <div className="flex min-w-0 flex-1 items-center gap-2.5 rounded-2xl px-4" style={{ background: "rgba(0,0,0,0.35)", border: "1px solid rgba(255,255,255,0.1)", backdropFilter: "blur(12px)", height: 48, minWidth: 220 }}>
             <Search size={16} strokeWidth={1.75} style={{ color: "#8a949b" }} />
             <input

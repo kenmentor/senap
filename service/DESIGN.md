@@ -31,7 +31,27 @@ Written on the dashboard Home cleanup (ui-ux skill, branch U, "just build it").
 - No new copy, no logic/data changes: hiding is by relevance, counts and
   summaries are the existing strings.
 
-## Follow-up: first-run gate on every tab
+## Follow-up 2: Link banner removed, YouTube-compact store header
+
+- Link page: the "WhatsApp server · Live — x/y connected" banner is gone.
+  Per-line status words stay on the cards.
+- Buyer storefront (`components/store/StoreGrid.tsx`): the tall full-bleed
+  cover (h-52/64) + overlapping shop card is replaced with a YouTube-style
+  compact header — slim cover strip (h-20/28), round avatar row with name +
+  tick + one meta line (products · stock), chat button. No cover photo set =
+  slim gradient strip, never a random stock photo (the products are the hero).
+  Search pulled up (mt-3) so products start sooner. No new copy.
+
+## Follow-up 1: first-run gate on every tab
+
+- Link page: the "WhatsApp server · Live — x/y connected" banner is gone.
+  Per-line status words stay on the cards.
+- Buyer storefront (`components/store/StoreGrid.tsx`): the tall full-bleed
+  cover (h-52/64) + overlapping shop card is replaced with a YouTube-style
+  compact header — slim cover strip (h-20/28), round avatar row with name +
+  tick + one meta line (products · stock), chat button. No cover photo set =
+  slim gradient strip, never a random stock photo (the products are the hero).
+  Search pulled up (mt-3) so products start sooner. No new copy.
 
 - New shared gate `components/dashboard/needs-line.tsx`: `useHasLine()`
   (`/api/accounts`, fail-open to `true` so a DB blip never locks anyone out)
