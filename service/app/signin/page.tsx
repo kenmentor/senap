@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, ArrowRight, Check, MailOpen } from "lucide-react";
+import { ArrowLeft, ArrowRight, MailOpen } from "lucide-react";
 import ChatWallpaper from "@/components/story/ChatWallpaper";
 import {
   firebaseConfigured,
@@ -30,7 +30,7 @@ function SigninForm() {
   const [missingKeys, setMissingKeys] = useState<string[]>([]);
   const [stage, setStage] = useState<"form" | "sent" | "completing">("form");
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<"link" | "demo" | "exchange" | null>(null);
+  const [busy, setBusy] = useState<"link" | null>(null);
 
   // Restore the typed email across reloads/remounts so the box never
   // mysteriously empties, and surface exactly which keys are missing.
@@ -72,11 +72,11 @@ function SigninForm() {
     e?.preventDefault();
     const clean = email.trim().toLowerCase();
     if (!EMAIL_RE.test(clean)) {
-      setError("That doesn't look like an email address.");
+      setError("Enter a valid email address.");
       return;
     }
     if (!firebaseConfigured()) {
-      setError("Email sign-in isn't set up yet — try the demo account below.");
+      setError("Email sign-in is currently unavailable.");
       return;
     }
     setBusy("link");
@@ -92,22 +92,6 @@ function SigninForm() {
     }
   };
 
-  const demo = async () => {
-    setBusy("demo");
-    setError(null);
-    try {
-      const res = await fetch("/api/auth/demo", { method: "POST" });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "Something went wrong.");
-      router.push(dest);
-      router.refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Something went wrong.");
-    } finally {
-      setBusy(null);
-    }
-  };
-
   return (
     <div className="w-full max-w-[400px] rounded-3xl p-7 sm:p-8" style={{ background: "rgba(17,26,33,0.85)", border: "1px solid rgba(255,255,255,0.1)", backdropFilter: "blur(18px)" }}>
       <Link href="/" className="flex items-center gap-3">
@@ -116,13 +100,9 @@ function SigninForm() {
           src="/icons/icon-192.png"
           alt="Senap"
           draggable={false}
-          className="h-11 w-11 rounded-2xl"
-          style={{ boxShadow: "0 0 24px rgba(0,168,132,0.35)" }}
+          className="h-10 w-10 rounded-xl"
         />
-        <span>
-          <span className="font-display block text-[19px] font-bold leading-tight" style={{ color: "#e9edef" }}>Senap</span>
-          <span className="block text-[11.5px]" style={{ color: "#8a949b" }}>Your shop&apos;s AI employee</span>
-        </span>
+        <span className="font-display block text-[19px] font-bold leading-tight" style={{ color: "#e9edef" }}>Senap</span>
       </Link>
 
       {stage === "completing" ? (
@@ -138,7 +118,7 @@ function SigninForm() {
             </span>
             <p className="mt-3 text-[14px] font-semibold" style={{ color: "#e9edef" }}>Check your inbox</p>
             <p className="mt-1 break-all px-4 text-center text-[13px]" style={{ color: "#8a949b" }}>
-              Tap the link we sent to <span style={{ color: "#e9edef" }}>{email}</span> — it signs you in instantly.
+              Sign-in link sent to <span style={{ color: "#e9edef" }}>{email}</span>.
             </p>
           </div>
 
@@ -167,11 +147,11 @@ function SigninForm() {
       ) : (
         <>
           <h1 className="font-display mt-6 text-[26px] font-bold" style={{ color: "#e9edef" }}>Sign in</h1>
-          <p className="mt-1 text-[13.5px]" style={{ color: "#8a949b" }}>Enter your email — we&apos;ll send a one-tap sign-in link.</p>
+          <p className="mt-1 text-[13.5px]" style={{ color: "#8a949b" }}>Enter your work email to continue.</p>
 
           {missingKeys.length > 0 && (
             <p className="mt-3 rounded-xl p-3 text-[12px]" style={{ background: "rgba(232,180,91,0.08)", color: "#e8b45b", border: "1px solid rgba(232,180,91,0.3)" }}>
-              Email sign-in is missing: {missingKeys.join(", ")} — add to .env.local and restart dev.
+              Email sign-in is unavailable: missing {missingKeys.join(", ")}.
             </p>
           )}
 
@@ -201,33 +181,15 @@ function SigninForm() {
               style={{ ...field, height: 48 }}
             />
           <button disabled={busy !== null} className="flex min-h-[48px] items-center justify-center gap-2 rounded-xl text-[14px] font-bold transition active:scale-[0.99] disabled:opacity-50" style={{ background: "#00a884", color: "#04241d" }}>
-            {busy === "link" ? "Sending link…" : (<>Send sign-in link <ArrowRight size={16} strokeWidth={2.5} /></>)}
+            {busy === "link" ? "Sending…" : (<>Continue <ArrowRight size={16} strokeWidth={2.5} /></>)}
           </button>
           </form>
-
-          <div className="mt-4 flex items-center gap-3" aria-hidden>
-            <span className="h-px flex-1" style={{ background: "rgba(255,255,255,0.1)" }} />
-            <span className="text-[11px] font-semibold uppercase" style={{ color: "#636c73", letterSpacing: "0.1em" }}>or</span>
-            <span className="h-px flex-1" style={{ background: "rgba(255,255,255,0.1)" }} />
-          </div>
-
-          <button
-            onClick={demo}
-            disabled={busy !== null}
-            className="mt-4 min-h-[48px] w-full rounded-xl text-[13.5px] font-semibold transition active:bg-white/10 disabled:opacity-50"
-            style={{ border: "1px solid rgba(255,255,255,0.12)", color: "#e9edef" }}
-          >
-            {busy === "demo" ? "Preparing demo…" : "Try the demo account"}
-          </button>
-          <p className="mt-3 text-center text-[11.5px] leading-relaxed" style={{ color: "#636c73" }}>
-            New here? The link creates your account instantly — same email, same account, every time.
-          </p>
         </>
       )}
 
       {stage === "form" && (
-        <p className="mt-4 flex items-center justify-center gap-1.5 text-center text-[11.5px]" style={{ color: "#636c73" }}>
-          <Check size={13} strokeWidth={3} style={{ color: "#00a884" }} /> Verified by email — only you can enter your account.
+        <p className="mt-4 text-center text-[11.5px]" style={{ color: "#636c73" }}>
+          A sign-in link will be sent to this address.
         </p>
       )}
     </div>
