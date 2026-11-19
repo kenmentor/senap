@@ -7,6 +7,7 @@ import { ArrowLeft, ArrowRight, Check, MailOpen } from "lucide-react";
 import ChatWallpaper from "@/components/story/ChatWallpaper";
 import {
   firebaseConfigured,
+  missingFirebaseKeys,
   sendEmailLink,
   isEmailLinkCallback,
   completeEmailLink,
@@ -26,9 +27,22 @@ function SigninForm() {
   const next = search.get("next");
   const dest = next && next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard";
   const [email, setEmail] = useState("");
+  const [missingKeys, setMissingKeys] = useState<string[]>([]);
   const [stage, setStage] = useState<"form" | "sent" | "completing">("form");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<"link" | "demo" | "exchange" | null>(null);
+
+  // Restore the typed email across reloads/remounts so the box never
+  // mysteriously empties, and surface exactly which keys are missing.
+  useEffect(() => {
+    try {
+      const draft = window.localStorage.getItem("senap-email-draft") || "";
+      if (draft) setEmail(draft);
+    } catch {
+      /* ignore */
+    }
+    setMissingKeys(missingFirebaseKeys());
+  }, []);
 
   // Incoming Firebase email-link callback: verify → mint session → go.
   useEffect(() => {
@@ -155,6 +169,12 @@ function SigninForm() {
           <h1 className="font-display mt-6 text-[26px] font-bold" style={{ color: "#e9edef" }}>Sign in</h1>
           <p className="mt-1 text-[13.5px]" style={{ color: "#8a949b" }}>Enter your email — we&apos;ll send a one-tap sign-in link.</p>
 
+          {missingKeys.length > 0 && (
+            <p className="mt-3 rounded-xl p-3 text-[12px]" style={{ background: "rgba(232,180,91,0.08)", color: "#e8b45b", border: "1px solid rgba(232,180,91,0.3)" }}>
+              Email sign-in is missing: {missingKeys.join(", ")} — add to .env.local and restart dev.
+            </p>
+          )}
+
           {error && (
             <p className="mt-4 rounded-xl p-3 text-[13px]" style={{ background: "rgba(230,106,106,0.1)", color: "#e66a6a", border: "1px solid rgba(230,106,106,0.35)" }}>
               {error}
@@ -164,7 +184,14 @@ function SigninForm() {
           <form className="mt-5 grid gap-3" onSubmit={send}>
             <input
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                try {
+                  window.localStorage.setItem("senap-email-draft", e.target.value);
+                } catch {
+                  /* ignore */
+                }
+              }}
               type="email"
               required
               autoComplete="email"

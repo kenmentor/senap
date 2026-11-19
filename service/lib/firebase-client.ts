@@ -14,12 +14,17 @@ let auth: Auth | null = null;
 
 /** True only when the Firebase web config is present. */
 export function firebaseConfigured(): boolean {
-  return Boolean(
-    process.env.NEXT_PUBLIC_FIREBASE_API_KEY &&
-      process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN &&
-      process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID &&
-      process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
-  );
+  return missingFirebaseKeys().length === 0;
+}
+
+/** Human labels of whichever public Firebase keys are absent (for setup hints). */
+export function missingFirebaseKeys(): string[] {
+  const missing: string[] = [];
+  if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY) missing.push("API key");
+  if (!process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN) missing.push("auth domain");
+  if (!process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID) missing.push("project ID");
+  if (!process.env.NEXT_PUBLIC_FIREBASE_APP_ID) missing.push("app ID");
+  return missing;
 }
 
 function getClientAuth(): Auth | null {
