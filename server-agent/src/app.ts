@@ -49,16 +49,56 @@ app.get("/", (c) => {
   return c.text("Hello Hono + Baileys!");
 });
 
-app.get("/health", (c) => {
+app.get("/health", async (c) => {
   const states = sessions.listSessions();
+  let leader: { instanceId: string; ageSec: number; weAreLeader: boolean } | null = null;
+  let role = "leader";
+  try {
+    const mod = await import("./sessions/leader.js");
+    leader = await mod.getLeaderInfo();
+    role = mod.isLeader() ? "leader" : leader ? "standby" : "electing";
+  } catch {
+    /* leader row unreadable — report what we have */
+  }
+  let boot: Record<string, unknown> = {};
+  try {
+    const mod = await import("./health-status.js");
+    boot = (mod.serverStatus?.() ?? {}) as Record<string, unknown>;
+  } catch {
+    /* optional */
+  }
   return c.json({
     status: "ok",
+    role,
     instance: INSTANCE_ID,
-    mongo: mongoose.connection.readyState === 1 ? "up" : "down",
+   mongo: mongoose.connection.readyState === 1 ? "up" : "down",
     sessions: states.length,
     connected: states.filter((s) => s.connected).length,
     states,
+    leader,
+    ...boot,
   });
+});
+
+// Standby guard: only the leader may mutate sockets or enqueue work.
+// Reads (GET) stay open so the dashboard can show the standby state.
+app.use(async (c, next) => {
+  const mutating = ["POST", "PUT", "DELETE"].includes(c.req.method);
+  const touchesSockets = c.req.path.startsWith("/sessions/");
+  if (mutating && touchesSockets) {
+    try {
+      const { isLeader } = await import("./sessions/leader.js");
+      if (!isLeader()) {
+        return c.json(
+          { error: "standby — another instance is active. This copy never dials WhatsApp." },
+          503,
+        );
+      }
+    } catch {
+      /* leader check unreadable — fail open for the single-instance case */
+    }
+  }
+  await next();
 });
 
 // Start (and create if needed) a session for a user

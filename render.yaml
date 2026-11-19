@@ -14,6 +14,10 @@ services:
   - type: web
     name: senap-agent
     runtime: node
+    # ONE copy only: two live sockets for the same number kick each other
+    # (REPLACED/conflict). The in-app Mongo leader lock is the second guard —
+    # a standby serves /health but never dials.
+    numInstances: 1
     rootDir: server-agent
     buildCommand: npm install --include=dev --no-audit --no-fund && npm run build
     startCommand: npm start
@@ -55,6 +59,7 @@ services:
   - type: web
     name: senap-dashboard
     runtime: node
+    numInstances: 1
     rootDir: service
     buildCommand: npm install --no-audit --no-fund && npm run build
     startCommand: npm start

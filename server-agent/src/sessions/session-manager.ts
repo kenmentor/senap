@@ -17,6 +17,15 @@ export default class SessionManager {
     return session;
   }
 
+  /**
+   * Boot placeholder: create the session object WITHOUT dialling so reads
+   * (GET /sessions/:id) report "starting" instead of 404 while the dial is
+   * still queued. The reconciler fills these in the same order every boot.
+   */
+  prewarm(userId: string): WhatsappSession {
+    return this.ensureSession(userId);
+  }
+
   getSession(userId: string) {
     return this.sessions.get(userId);
   }
