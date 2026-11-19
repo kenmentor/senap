@@ -194,7 +194,7 @@ function SigninForm() {
       <button
         onClick={go}
         disabled={stage !== "idle"}
-        className="btn-google mt-5 flex min-h-[52px] w-full items-center justify-center gap-3 text-[15px] font-semibold transition active:scale-[0.99] disabled:opacity-70"
+        className="mt-5 flex min-h-[52px] w-full items-center justify-center gap-3 rounded-xl text-[15px] font-semibold transition active:scale-[0.99] disabled:opacity-70"
         style={{ background: "#ffffff", color: "#1f1f1f" }}
       >
         {stage === "idle" ? (

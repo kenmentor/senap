@@ -52,21 +52,6 @@ a {
   }
 }
 
-/* Senap signature: sharp edges everywhere. No border-radius anywhere in
-   the product — cards, buttons, pills, avatars, inputs all sit square.
-   Exception: .btn-google keeps the standard Google button shape. */
-*,
-*::before,
-*::after {
-  border-radius: 0 !important;
-}
-
-.btn-google,
-.btn-google::before,
-.btn-google::after {
-  border-radius: 8px !important;
-}
-
 .font-display {
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Helvetica, Arial, sans-serif;
   letter-spacing: -0.035em;
