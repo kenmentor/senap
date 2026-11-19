@@ -8,8 +8,14 @@
  */
 
 type AdminState =
-  | { ready: true }
-  | { ready: false; reason: "missing" | "invalid-json" | "invalid-cred"; hint?: string };
+  | { ready: true; serverProject: string | null; envLen: number }
+  | {
+      ready: false;
+      reason: "missing" | "invalid-json" | "invalid-cred";
+      hint?: string;
+      serverProject?: string | null;
+      envLen?: number;
+    };
 
 let state: AdminState | null = null;
 
@@ -21,8 +27,9 @@ function hintOf(msg: string): string {
 async function init(): Promise<boolean> {
   if (state) return state.ready;
   const raw = (process.env.FIREBASE_SERVICE_ACCOUNT ?? "").trim();
+  const envLen = raw.length;
   if (!raw) {
-    state = { ready: false, reason: "missing" };
+    state = { ready: false, reason: "missing", envLen };
     return false;
   }
   try {
@@ -34,29 +41,31 @@ async function init(): Promise<boolean> {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("[firebase-admin] service account is not valid JSON:", msg);
-      state = { ready: false, reason: "invalid-json", hint: hintOf(msg) };
+      state = { ready: false, reason: "invalid-json", hint: hintOf(msg), envLen };
       return false;
     }
     if (!parsed || typeof parsed !== "object") {
       console.error("[firebase-admin] service account JSON is not an object");
-      state = { ready: false, reason: "invalid-json", hint: "JSON is not an object" };
+      state = { ready: false, reason: "invalid-json", hint: "JSON is not an object", envLen };
       return false;
     }
     // Required-field check so the UI can say *what* is wrong instead of a
     // cryptic cert() throw. Values are never logged or returned.
     const rec = parsed as Record<string, unknown>;
+    const serverProject =
+      typeof rec.project_id === "string" && rec.project_id.trim() ? rec.project_id.trim() : null;
     for (const field of ["type", "project_id", "private_key", "client_email"]) {
       if (typeof rec[field] !== "string" || !(rec[field] as string).trim()) {
-        const hint = `missing field: ${field}`;
+        const hint = `FIREBASE_SERVICE_ACCOUNT JSON missing field: ${field}`;
         console.error(`[firebase-admin] ${hint}`);
-        state = { ready: false, reason: "invalid-cred", hint };
+        state = { ready: false, reason: "invalid-cred", hint, serverProject, envLen };
         return false;
       }
     }
     if (!String(rec.private_key).includes("BEGIN PRIVATE KEY")) {
-      const hint = "private_key is not a PEM block";
+      const hint = "FIREBASE_SERVICE_ACCOUNT private_key is not a PEM block";
       console.error(`[firebase-admin] ${hint}`);
-      state = { ready: false, reason: "invalid-cred", hint };
+      state = { ready: false, reason: "invalid-cred", hint, serverProject, envLen };
       return false;
     }
     if (getApps().length === 0) {
@@ -64,12 +73,12 @@ async function init(): Promise<boolean> {
     }
     // Warm the auth client now so runtime failures surface here, once.
     getAuth();
-    state = { ready: true };
+    state = { ready: true, serverProject, envLen };
     return true;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[firebase-admin] credential rejected:", msg);
-    state = { ready: false, reason: "invalid-cred", hint: hintOf(msg) };
+    state = { ready: false, reason: "invalid-cred", hint: hintOf(msg), envLen };
     return false;
   }
 }
@@ -80,15 +89,39 @@ export async function adminStatus(): Promise<{
   reason?: "missing" | "invalid";
   detail?: "missing" | "invalid-json" | "invalid-cred";
   hint?: string;
+  /** Project id inside FIREBASE_SERVICE_ACCOUNT (public, safe to show). */
+  serverProject?: string | null;
+  /** NEXT_PUBLIC_FIREBASE_PROJECT_ID the client was built with (public). */
+  clientProject?: string | null;
+  /** Length of the raw env value — catches truncated pastes. No secret. */
+  envLen?: number;
 }> {
   await init();
-  if (state?.ready) return { ready: true };
-  if (!state || state.ready) return { ready: false, reason: "missing", detail: "missing" };
+  const clientProject = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID?.trim() || null;
+  if (state?.ready)
+    return { ready: true, serverProject: state.serverProject, clientProject, envLen: state.envLen };
+  if (!state || state.ready)
+    return { ready: false, reason: "missing", detail: "missing", clientProject, envLen: 0 };
   // Normalize detailed internal reasons to the public "missing" | "invalid"
   // contract the sign-in page and API route rely on, but keep `detail` + a
   // sanitized `hint` so the UI can show *why* without leaking secrets.
-  if (state.reason === "missing") return { ready: false, reason: "missing", detail: "missing" };
-  return { ready: false, reason: "invalid", detail: state.reason, hint: state.hint };
+  if (state.reason === "missing")
+    return {
+      ready: false,
+      reason: "missing",
+      detail: "missing",
+      clientProject,
+      envLen: state.envLen ?? 0,
+    };
+  return {
+    ready: false,
+    reason: "invalid",
+    detail: state.reason,
+    hint: state.hint,
+    serverProject: state.serverProject ?? null,
+    clientProject,
+    envLen: state.envLen ?? 0,
+  };
 }
 
 /** Verify a Firebase ID token. Failure carries a machine-readable code. */

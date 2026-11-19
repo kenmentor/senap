@@ -47,6 +47,9 @@ export async function GET() {
     reason: status.ready ? undefined : status.reason,
     detail: status.ready ? undefined : status.detail,
     hint: status.ready ? undefined : status.hint,
+    serverProject: status.serverProject ?? null,
+    clientProject: status.clientProject ?? null,
+    envLen: status.envLen ?? null,
   });
 }
 

@@ -44,6 +44,11 @@ function SigninForm() {
   const [missingKeys, setMissingKeys] = useState<string[]>([]);
   const [serverIssue, setServerIssue] = useState<null | "missing" | "invalid">(null);
   const [serverDetail, setServerDetail] = useState<string | null>(null);
+  const [serverMeta, setServerMeta] = useState<{
+    serverProject: string | null;
+    clientProject: string | null;
+    envLen: number | null;
+  }>({ serverProject: null, clientProject: null, envLen: null });
   const [stage, setStage] = useState<"idle" | "redirecting" | "completing">("idle");
   const [error, setError] = useState<string | null>(null);
   const redirectTimer = useRef<number | null>(null);
@@ -78,6 +83,11 @@ function SigninForm() {
         if (d.configured === true) {
           setServerIssue(null);
           setServerDetail(null);
+          setServerMeta({
+            serverProject: typeof d.serverProject === "string" ? d.serverProject : null,
+            clientProject: typeof d.clientProject === "string" ? d.clientProject : null,
+            envLen: typeof d.envLen === "number" ? d.envLen : null,
+          });
         } else if (d.reason === "invalid" || d.reason === "missing") {
           setServerIssue(d.reason);
           // detail/hint are sanitized server-side (no key material).
@@ -85,6 +95,11 @@ function SigninForm() {
             (x): x is string => typeof x === "string" && x.length > 0,
           );
           setServerDetail(bits.length > 0 ? bits.join(": ") : null);
+          setServerMeta({
+            serverProject: typeof d.serverProject === "string" ? d.serverProject : null,
+            clientProject: typeof d.clientProject === "string" ? d.clientProject : null,
+            envLen: typeof d.envLen === "number" ? d.envLen : null,
+          });
         } else {
           setServerIssue(null);
           setServerDetail(null);
@@ -185,22 +200,36 @@ function SigninForm() {
 
       {missingKeys.length > 0 && (
         <p className="mt-3 rounded-xl p-3 text-[12px]" style={{ background: "rgba(232,180,91,0.08)", color: "#e8b45b", border: "1px solid rgba(232,180,91,0.3)" }}>
-          Google sign-in is unavailable: missing {missingKeys.join(", ")}.
+          Google sign-in is unavailable — missing client key{missingKeys.length > 1 ? "s" : ""}: {missingKeys.join(", ")}.
+          Set {missingKeys.length > 1 ? "them" : "it"} in .env.local (local) or the dashboard env vars (hosted), then restart/redeploy.
         </p>
       )}
 
       {missingKeys.length === 0 && serverIssue === "missing" && (
         <p className="mt-3 rounded-xl p-3 text-[12px]" style={{ background: "rgba(232,180,91,0.08)", color: "#e8b45b", border: "1px solid rgba(232,180,91,0.3)" }}>
-          App keys are fine — the server key is empty. Add FIREBASE_SERVICE_ACCOUNT where the app runs, then restart (local) or redeploy (hosted).
+          Client keys are fine — FIREBASE_SERVICE_ACCOUNT is empty on the server. Add it where the app runs, then restart
+          (local) or redeploy (hosted).
         </p>
       )}
 
       {missingKeys.length === 0 && serverIssue === "invalid" && (
-        <p className="mt-3 rounded-xl p-3 text-[12px]" style={{ background: "rgba(232,180,91,0.08)", color: "#e8b45b", border: "1px solid rgba(232,180,91,0.3)" }}>
-          App keys are fine — the server key is present but invalid.
-          {serverDetail ? ` (${serverDetail}) ` : " "}
-          Re-paste the full one-line service-account JSON, then restart or redeploy.
-        </p>
+        <div className="mt-3 rounded-xl p-3 text-[12px]" style={{ background: "rgba(232,180,91,0.08)", color: "#e8b45b", border: "1px solid rgba(232,180,91,0.3)" }}>
+          <p>Client keys are fine — FIREBASE_SERVICE_ACCOUNT is present but invalid.</p>
+          {serverDetail && <p className="mt-1 opacity-90">Cause: {serverDetail}</p>}
+          <p className="mt-1 opacity-90">
+            Key: FIREBASE_SERVICE_ACCOUNT
+            {typeof serverMeta.envLen === "number" ? ` (length ${serverMeta.envLen})` : ""}
+            {serverMeta.serverProject ? ` · project “${serverMeta.serverProject}”` : ""}
+            {serverMeta.clientProject ? ` · app uses “${serverMeta.clientProject}”` : ""}
+            {serverMeta.serverProject &&
+            serverMeta.clientProject &&
+            serverMeta.serverProject !== serverMeta.clientProject
+              ? " — these two projects don't match"
+              : ""}
+            .
+          </p>
+          <p className="mt-1">Re-paste the full one-line service-account JSON, then restart or redeploy.</p>
+        </div>
       )}
 
       {error && (
