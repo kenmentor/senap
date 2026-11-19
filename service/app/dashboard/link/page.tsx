@@ -144,6 +144,28 @@ function normalizePhone(cc: string, raw: string): string {
   return d;
 }
 
+/** Last number a code was requested for — prefilled next time. */
+const LINK_PHONE_KEY = "senap-link-phone";
+function loadSavedLinkPhone(): { cc: string; phone: string } | null {
+  try {
+    const raw = window.localStorage.getItem(LINK_PHONE_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw) as { cc?: unknown; phone?: unknown };
+    if (typeof p.cc !== "string" || typeof p.phone !== "string") return null;
+    if (!p.cc.trim() || !p.phone.trim()) return null;
+    return { cc: p.cc, phone: p.phone };
+  } catch {
+    return null;
+  }
+}
+function saveLinkPhone(cc: string, phone: string): void {
+  try {
+    window.localStorage.setItem(LINK_PHONE_KEY, JSON.stringify({ cc, phone }));
+  } catch {
+    /* private mode — prefill just won't stick */
+  }
+}
+
 function Steps({ items }: { items: string[] }) {
   return (
     <ol className="mt-4 w-full rounded-2xl p-4" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>
@@ -173,81 +195,43 @@ function isMobileDevice(): boolean {
   }
 }
 
-/** Mini WhatsApp screen mock — one tap of the 2026 code-link flow. */
-function MockScreen({ title, caption, children }: { title: string; caption: string; children: React.ReactNode }) {
+/** Where to type the code in WhatsApp — one clean card, no mock phones.
+ *  Official walkthroughs can't be embedded (WhatsApp blocks hotlinking),
+ *  so this mirrors the real screens + links the official guide below. */
+function LinkCodeGuide() {
+  const rows = [
+    { n: 1, text: "Open WhatsApp → Settings → Linked devices" },
+    { n: 2, text: "Tap “Link a device” (green button)" },
+    { n: 3, text: "Choose “Link with phone number instead” — not the camera" },
+    { n: 4, text: "Type the 8-character code from above into the boxes" },
+  ];
   return (
-    <figure className="w-[168px] shrink-0 snap-center">
-      <div className="overflow-hidden rounded-2xl" style={{ background: "#111b21", border: "1px solid rgba(255,255,255,0.12)" }}>
-        <div className="px-2.5 py-2 text-center text-[10px] font-bold" style={{ background: "#1f2c34", color: "#e9edef" }}>
-          {title}
-        </div>
-        <div className="flex min-h-[168px] flex-col justify-center gap-1.5 p-2">
-          {children}
-        </div>
-      </div>
-      <figcaption className="mt-1.5 px-0.5 text-center text-[11px] leading-snug" style={{ color: "#8a949b" }}>
-        {caption}
-      </figcaption>
-    </figure>
-  );
-}
-
-function MockRow({ label, active, dim }: { label: string; active?: boolean; dim?: boolean }) {
-  return (
-    <div
-      className="rounded-lg px-2 py-1.5 text-[10.5px] font-medium"
-      style={
-        active
-          ? { background: "rgba(0,168,132,0.18)", border: "1px solid rgba(0,168,132,0.55)", color: "#fff" }
-          : { background: "rgba(255,255,255,0.04)", border: "1px solid transparent", color: dim ? "#4a545b" : "#aebac1" }
-      }
-    >
-      {label}
-    </div>
-  );
-}
-
-/** Visual walkthrough of the code flow — most people have never done it. */
-function CodeVisualGuide() {
-  const digits = ["A", "B", "C", "D", "–", "1", "2", "3", "4"];
-  return (
-    <div className="mt-4 w-full">
-      <p className="px-1 text-[12px] font-semibold" style={{ color: "#aebac1" }}>
-        Where to tap in WhatsApp <span style={{ color: "#636c73" }}>— swipe through</span>
+    <div className="mt-4 w-full rounded-2xl p-4" style={{ background: "#0b141a", border: "1px solid rgba(255,255,255,0.1)" }}>
+      <p className="text-[12px] font-semibold" style={{ color: "#aebac1" }}>
+        On your phone, in WhatsApp
       </p>
-      <div className="mt-2 flex snap-x snap-mandatory gap-2.5 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
-        <MockScreen title="⋯  Settings" caption="1 · Open WhatsApp → Settings (⋯ on Android)">
-          <MockRow label="👤 Adaeze Eze" dim />
-          <MockRow label="🔗 Linked devices" active />
-          <MockRow label="🔔 Notifications" dim />
-        </MockScreen>
-        <MockScreen title="Linked devices" caption="2 · Your devices + the green button">
-          <MockRow label="📱 This phone" dim />
-          <MockRow label="＋  Link a device" active />
-        </MockScreen>
-        <MockScreen title="Link a device" caption="3 · Pick the code option, not the camera">
-          <MockRow label="📷 Scan QR code" dim />
-          <MockRow label="🔢 Link with phone number instead" active />
-        </MockScreen>
-        <MockScreen title="Enter code" caption="4 · Type the 8-character code from above">
-          <div className="grid grid-cols-5 gap-1">
-            {digits.map((d, i) => (
-              <span
-                key={i}
-                className="flex h-7 items-center justify-center rounded-md font-mono text-[11px] font-bold"
-                style={
-                  d === "–"
-                    ? { color: "#636c73" }
-                    : { background: "rgba(0,168,132,0.14)", border: "1px solid rgba(0,168,132,0.5)", color: "#00d19f" }
-                }
-              >
-                {d}
-              </span>
-            ))}
-          </div>
-          <p className="text-center text-[9.5px]" style={{ color: "#636c73" }}>Codes expire fast — request a new one if rejected</p>
-        </MockScreen>
+      <ol className="mt-2.5 flex flex-col gap-2">
+        {rows.map((r) => (
+          <li key={r.n} className="flex items-center gap-2.5">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold" style={{ background: "rgba(0,168,132,0.14)", color: "#00d19f", border: "1px solid rgba(0,168,132,0.4)" }}>
+              {r.n}
+            </span>
+            <span className="text-[12.5px] leading-snug" style={{ color: "#cfd6db" }}>{r.text}</span>
+          </li>
+        ))}
+      </ol>
+      <div className="mt-3 flex items-center justify-center gap-1" aria-hidden>
+        {Array.from({ length: 8 }).map((_, i) => (
+          <span
+            key={i}
+            className="flex h-8 w-7 items-center justify-center rounded-md border border-dashed font-mono text-[12px] font-bold"
+            style={{ borderColor: "rgba(0,168,132,0.5)", color: "#00d19f", background: "rgba(0,168,132,0.07)" }}
+          >
+            ·
+          </span>
+        ))}
       </div>
+      <p className="mt-1.5 text-center text-[10.5px]" style={{ color: "#636c73" }}>The 8 boxes WhatsApp shows you — codes expire fast</p>
     </div>
   );
 }
@@ -330,9 +314,16 @@ export default function LinkPage() {
     setCopied(false);
     setActionError(null);
     startedHereRef.current = false;
-    // Default the country prefix from the shop's own number.
-    const guessed = guessCc(bizPhone);
-    if (guessed) setCc(guessed);
+    // Default the country prefix from the shop's own number — unless we
+    // remember the last number a code was requested for (that wins).
+    const saved = loadSavedLinkPhone();
+    if (saved) {
+      setCc(saved.cc);
+      setPhone(saved.phone);
+    } else {
+      const guessed = guessCc(bizPhone);
+      if (guessed) setCc(guessed);
+    }
     setPickerOpen(true);
   };
 
@@ -350,11 +341,23 @@ export default function LinkPage() {
           const s = await res.json();
           const phone = typeof s?.business?.phone === "string" ? s.business.phone : "";
           setBizPhone(phone);
-          const guessed = guessCc(phone);
-          if (guessed) setCc(guessed);
+          // Last-used number wins over the shop-number guess.
+          const saved = loadSavedLinkPhone();
+          if (saved) {
+            setCc(saved.cc);
+            setPhone(saved.phone);
+          } else {
+            const guessed = guessCc(phone);
+            if (guessed) setCc(guessed);
+          }
         }
       } catch {
         /* country prefix stays on default */
+        const saved = loadSavedLinkPhone();
+        if (saved) {
+          setCc(saved.cc);
+          setPhone(saved.phone);
+        }
       }
     })();
   }, []);
@@ -653,6 +656,7 @@ export default function LinkPage() {
         pairDigitsRef.current = digits;
         codeAtRef.current = Date.now();
         setCopied(false);
+        saveLinkPhone(cc, phone.trim());
         setPhase("qr"); // “waiting” — the code panel shows the code + waiting note
         pollForConnection(id);
       }
@@ -1092,7 +1096,7 @@ export default function LinkPage() {
                     </p>
                   )}
 
-                  <CodeVisualGuide />
+                  <LinkCodeGuide />
                   <a
                     href="https://faq.whatsapp.com/777829757305409"
                     target="_blank"

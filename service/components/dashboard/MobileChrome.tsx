@@ -15,15 +15,16 @@ import {
   LogOut,
   MoreHorizontal,
   X,
+  Plus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const tabs = [
   { href: "/dashboard", label: "Home", icon: Home, exact: true },
   { href: "/dashboard/link", label: "Link", icon: QrCode, exact: false },
-  { href: "/dashboard/agent", label: "Agent", icon: UserRound, exact: false },
+  { href: "/dashboard/products", label: "Products", icon: Plus, exact: false, fab: true },
   { href: "/dashboard/groups", label: "Groups", icon: Users, exact: false },
-  { href: "/dashboard/products", label: "Products", icon: Package, exact: false },
+  { href: "/dashboard/agent", label: "Agent", icon: UserRound, exact: false },
 ];
 
 const moreItems = [
@@ -130,6 +131,34 @@ export default function MobileChrome() {
           {tabs.map((t) => {
             const active = t.exact ? pathname === t.href : pathname?.startsWith(t.href);
             const Icon = t.icon;
+            if ("fab" in t && t.fab) {
+              return (
+                <div key={t.href} className="flex flex-col items-center">
+                  <Link
+                    href={t.href}
+                    aria-label="Products"
+                    aria-current={active ? "page" : undefined}
+                    className="-mt-7 flex h-14 w-14 items-center justify-center rounded-full transition active:scale-95"
+                    style={{
+                      background: "#00a884",
+                      color: "#04241d",
+                      border: "4px solid #0b141a",
+                      boxShadow: active
+                        ? "0 0 0 2px rgba(0,168,132,0.55), 0 8px 20px rgba(0,168,132,0.35)"
+                        : "0 8px 20px rgba(0,0,0,0.5)",
+                    }}
+                  >
+                    <Icon size={26} strokeWidth={2.5} />
+                  </Link>
+                  <span
+                    className={cn("mt-1 text-[10.5px] leading-none", active ? "font-bold" : "font-medium")}
+                    style={{ color: active ? "#e9edef" : "#8a949b" }}
+                  >
+                    {t.label}
+                  </span>
+                </div>
+              );
+            }
             return (
               <Link
                 key={t.href}
