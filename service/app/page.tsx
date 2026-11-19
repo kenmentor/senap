@@ -1,4 +1,5 @@
 import ChatWallpaper from "@/components/story/ChatWallpaper";
+import HeroBanner from "@/components/HeroBanner";
 import ScrollStory from "@/components/story/ScrollStory";
 import NextSection from "@/components/story/NextSection";
 import IntroSections from "@/components/story/IntroSections";
@@ -30,6 +31,7 @@ export default function Page() {
             </a>
           </div>
         </header>
+        <HeroBanner />
         <IntroSections />
         <ScrollStory />
         <NextSection />

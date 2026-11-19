@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
@@ -45,6 +45,27 @@ function SigninForm() {
   const [serverReady, setServerReady] = useState<boolean | null>(null);
   const [stage, setStage] = useState<"idle" | "redirecting" | "completing">("idle");
   const [error, setError] = useState<string | null>(null);
+  const redirectTimer = useRef<number | null>(null);
+
+  // Safety net: if Google neither opens nor returns within 12s, hand the
+  // button back with a plain message instead of hanging on a spinner.
+  useEffect(() => {
+    if (stage !== "redirecting") return;
+    redirectTimer.current = window.setTimeout(() => {
+      setStage((s) => {
+        if (s === "redirecting") {
+          setError("Google didn't open — allow popups and try again, or use Chrome.");
+        }
+        return s === "redirecting" ? "idle" : s;
+      });
+    }, 12000);
+    return () => {
+      if (redirectTimer.current !== null) {
+        window.clearTimeout(redirectTimer.current);
+        redirectTimer.current = null;
+      }
+    };
+  }, [stage]);
 
   useEffect(() => {
     setMissingKeys(missingFirebaseKeys());
