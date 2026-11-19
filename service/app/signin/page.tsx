@@ -219,8 +219,8 @@ function SigninForm() {
               <p>Client keys are fine — the server crashed loading auth libraries (jose / jwks-rsa), not your key.</p>
               {serverDetail && <p className="mt-1 opacity-90">Cause: {serverDetail}</p>}
               <p className="mt-1">
-                Fix: set the dashboard runtime to Node 22 (Vercel: Settings → Node Version, or engines node 22.x —
-                just pushed), then redeploy.
+                Fix: the compatible library pin is pushed — redeploy the dashboard (pick up the lockfile change),
+                ideally with Node 22.
               </p>
             </>
           ) : (
