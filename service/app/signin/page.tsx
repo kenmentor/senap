@@ -3,92 +3,94 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, ArrowRight, MailOpen } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import ChatWallpaper from "@/components/story/ChatWallpaper";
 import {
   firebaseConfigured,
   missingFirebaseKeys,
-  sendEmailLink,
-  isEmailLinkCallback,
-  completeEmailLink,
+  beginGoogleSignIn,
+  completeGoogleRedirect,
 } from "@/lib/firebase-client";
 
-const field = {
-  background: "rgba(255,255,255,0.04)",
-  border: "1px solid rgba(255,255,255,0.1)",
-  color: "#e9edef"
-} as const;
-
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+function GoogleMark({ size = 20 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden>
+      <path
+        fill="#4285F4"
+        d="M23.5 12.3c0-.9-.1-1.5-.3-2.2H12v4.1h6.5c-.1 1.1-.8 2.7-2.4 3.8l3.6 2.8c2.2-2 3.8-5 3.8-8.5z"
+      />
+      <path
+        fill="#34A853"
+        d="M12 24c3.2 0 5.9-1.1 7.9-2.9l-3.8-2.9c-1 .7-2.4 1.2-4.1 1.2-3.1 0-5.8-2.1-6.8-5l-3.6 2.8C3.5 21.3 7.5 24 12 24z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M5.2 14.4c-.2-.7-.4-1.5-.4-2.4s.1-1.7.4-2.4L1.6 6.9C.6 8.6 0 10.2 0 12s.6 3.4 1.6 4.9l3.6-2.5z"
+      />
+      <path
+        fill="#EA4335"
+        d="M12 4.7c1.8 0 3 .8 3.7 1.4l3.3-3.2C17.9 1.1 15.2 0 12 0 7.5 0 3.5 2.7 1.6 6.9l3.6 2.8c1-2.9 3.7-5 6.8-5z"
+      />
+    </svg>
+  );
+}
 
 function SigninForm() {
   const router = useRouter();
   const search = useSearchParams();
   const next = search.get("next");
   const dest = next && next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard";
-  const [email, setEmail] = useState("");
   const [missingKeys, setMissingKeys] = useState<string[]>([]);
-  const [stage, setStage] = useState<"form" | "sent" | "completing">("form");
+  const [stage, setStage] = useState<"idle" | "redirecting" | "completing">("idle");
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<"link" | null>(null);
 
-  // Restore the typed email across reloads/remounts so the box never
-  // mysteriously empties, and surface exactly which keys are missing.
   useEffect(() => {
-    try {
-      const draft = window.localStorage.getItem("senap-email-draft") || "";
-      if (draft) setEmail(draft);
-    } catch {
-      /* ignore */
-    }
     setMissingKeys(missingFirebaseKeys());
-  }, []);
-
-  // Incoming Firebase email-link callback: verify → mint session → go.
-  useEffect(() => {
-    if (!isEmailLinkCallback()) return;
-    setStage("completing");
+    // Coming back from Google: verify → mint session → go.
     (async () => {
+      let result: { idToken: string; next: string } | null = null;
       try {
-        const idToken = await completeEmailLink();
+        result = await completeGoogleRedirect();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Google sign-in failed — try again.");
+        return;
+      }
+      if (!result) return;
+      setStage("completing");
+      try {
         const res = await fetch("/api/auth/firebase", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ idToken }),
+          body: JSON.stringify({ idToken: result.idToken }),
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || "Something went wrong.");
-        router.push(dest);
+        const to = result.next && result.next.startsWith("/") && !result.next.startsWith("//") ? result.next : dest;
+        router.push(to);
         router.refresh();
       } catch (e) {
-        setStage("form");
-        setError(e instanceof Error ? e.message : "That link didn't work — request a fresh one.");
+        setStage("idle");
+        setError(e instanceof Error ? e.message : "Something went wrong.");
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const send = async (e?: React.FormEvent) => {
-    e?.preventDefault();
-    const clean = email.trim().toLowerCase();
-    if (!EMAIL_RE.test(clean)) {
-      setError("Enter a valid email address.");
-      return;
-    }
+  const go = async () => {
     if (!firebaseConfigured()) {
-      setError("Email sign-in is currently unavailable.");
+      setError("Google sign-in isn't set up yet.");
       return;
     }
-    setBusy("link");
     setError(null);
+    setStage("redirecting");
     try {
-      await sendEmailLink(clean);
-      setEmail(clean);
-      setStage("sent");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
-    } finally {
-      setBusy(null);
+      await beginGoogleSignIn(dest);
+      // Redirect leaves the page — if we're still here it was blocked.
+      setStage("idle");
+      setError("The Google window was blocked — allow popups/redirects and try again.");
+    } catch (e) {
+      setStage("idle");
+      setError(e instanceof Error ? e.message : "Google sign-in failed — try again.");
     }
   };
 
@@ -105,93 +107,40 @@ function SigninForm() {
         <span className="font-display block text-[19px] font-bold leading-tight" style={{ color: "#e9edef" }}>Senap</span>
       </Link>
 
-      {stage === "completing" ? (
-        <>
-          <h1 className="font-display mt-6 text-[26px] font-bold" style={{ color: "#e9edef" }}>Signing you in…</h1>
-          <p className="mt-1 text-[13.5px]" style={{ color: "#8a949b" }}>Verifying your email link.</p>
-        </>
-      ) : stage === "sent" ? (
-        <>
-          <div className="mt-6 flex flex-col items-center rounded-2xl py-6" style={{ background: "rgba(0,168,132,0.07)", border: "1px solid rgba(0,168,132,0.3)" }}>
-            <span className="flex h-14 w-14 items-center justify-center rounded-full" style={{ background: "rgba(0,168,132,0.16)", color: "#00d19f" }}>
-              <MailOpen size={26} strokeWidth={1.75} />
-            </span>
-            <p className="mt-3 text-[14px] font-semibold" style={{ color: "#e9edef" }}>Check your inbox</p>
-            <p className="mt-1 break-all px-4 text-center text-[13px]" style={{ color: "#8a949b" }}>
-              Sign-in link sent to <span style={{ color: "#e9edef" }}>{email}</span>.
-            </p>
-          </div>
+      <h1 className="font-display mt-6 text-[26px] font-bold" style={{ color: "#e9edef" }}>Sign in</h1>
+      <p className="mt-1 text-[13.5px]" style={{ color: "#8a949b" }}>Continue with your Google account.</p>
 
-          {error && (
-            <p className="mt-4 rounded-xl p-3 text-[13px]" style={{ background: "rgba(230,106,106,0.1)", color: "#e66a6a", border: "1px solid rgba(230,106,106,0.35)" }}>
-              {error}
-            </p>
-          )}
-
-          <button
-            onClick={() => send()}
-            disabled={busy !== null}
-            className="mt-4 min-h-[48px] w-full rounded-xl text-[13.5px] font-semibold transition active:bg-white/10 disabled:opacity-50"
-            style={{ border: "1px solid rgba(255,255,255,0.12)", color: "#e9edef" }}
-          >
-            {busy === "link" ? "Resending…" : "Resend link"}
-          </button>
-          <button
-            onClick={() => { setStage("form"); setError(null); }}
-            className="mt-2 flex min-h-[44px] w-full items-center justify-center gap-1.5 text-[13px] font-medium transition active:opacity-70"
-            style={{ color: "#8a949b" }}
-          >
-            <ArrowLeft size={15} /> Use a different email
-          </button>
-        </>
-      ) : (
-        <>
-          <h1 className="font-display mt-6 text-[26px] font-bold" style={{ color: "#e9edef" }}>Sign in</h1>
-          <p className="mt-1 text-[13.5px]" style={{ color: "#8a949b" }}>Enter your work email to continue.</p>
-
-          {missingKeys.length > 0 && (
-            <p className="mt-3 rounded-xl p-3 text-[12px]" style={{ background: "rgba(232,180,91,0.08)", color: "#e8b45b", border: "1px solid rgba(232,180,91,0.3)" }}>
-              Email sign-in is unavailable: missing {missingKeys.join(", ")}.
-            </p>
-          )}
-
-          {error && (
-            <p className="mt-4 rounded-xl p-3 text-[13px]" style={{ background: "rgba(230,106,106,0.1)", color: "#e66a6a", border: "1px solid rgba(230,106,106,0.35)" }}>
-              {error}
-            </p>
-          )}
-
-          <form className="mt-5 grid gap-3" onSubmit={send}>
-            <input
-              value={email}
-              onChange={(e) => {
-                setEmail(e.target.value);
-                try {
-                  window.localStorage.setItem("senap-email-draft", e.target.value);
-                } catch {
-                  /* ignore */
-                }
-              }}
-              type="email"
-              required
-              autoComplete="email"
-              autoFocus
-              placeholder="you@business.com"
-              className="rounded-xl px-4 text-[16px] outline-none placeholder:text-[#4a545b]"
-              style={{ ...field, height: 48 }}
-            />
-          <button disabled={busy !== null} className="flex min-h-[48px] items-center justify-center gap-2 rounded-xl text-[14px] font-bold transition active:scale-[0.99] disabled:opacity-50" style={{ background: "#00a884", color: "#04241d" }}>
-            {busy === "link" ? "Sending…" : (<>Continue <ArrowRight size={16} strokeWidth={2.5} /></>)}
-          </button>
-          </form>
-        </>
-      )}
-
-      {stage === "form" && (
-        <p className="mt-4 text-center text-[11.5px]" style={{ color: "#636c73" }}>
-          A sign-in link will be sent to this address.
+      {missingKeys.length > 0 && (
+        <p className="mt-3 rounded-xl p-3 text-[12px]" style={{ background: "rgba(232,180,91,0.08)", color: "#e8b45b", border: "1px solid rgba(232,180,91,0.3)" }}>
+          Google sign-in is unavailable: missing {missingKeys.join(", ")}.
         </p>
       )}
+
+      {error && (
+        <p className="mt-4 rounded-xl p-3 text-[13px]" style={{ background: "rgba(230,106,106,0.1)", color: "#e66a6a", border: "1px solid rgba(230,106,106,0.35)" }}>
+          {error}
+        </p>
+      )}
+
+      <button
+        onClick={go}
+        disabled={stage !== "idle"}
+        className="mt-5 flex min-h-[52px] w-full items-center justify-center gap-3 rounded-xl text-[15px] font-semibold transition active:scale-[0.99] disabled:opacity-70"
+        style={{ background: "#ffffff", color: "#1f1f1f" }}
+      >
+        {stage === "idle" ? (
+          <>
+            <GoogleMark size={20} /> Continue with Google
+          </>
+        ) : (
+          <>
+            <Loader2 size={18} className="animate-spin" /> {stage === "completing" ? "Signing you in…" : "Opening Google…"}
+          </>
+        )}
+      </button>
+      <p className="mt-4 text-center text-[11.5px] leading-relaxed" style={{ color: "#636c73" }}>
+        New here? Signing in creates your workspace automatically.
+      </p>
     </div>
   );
 }

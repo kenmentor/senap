@@ -3,9 +3,9 @@
 import { initializeApp, getApps, type FirebaseApp } from "firebase/app";
 import {
   getAuth,
-  isSignInWithEmailLink,
-  sendSignInLinkToEmail,
-  signInWithEmailLink,
+  GoogleAuthProvider,
+  signInWithRedirect,
+  getRedirectResult,
   type Auth,
 } from "firebase/auth";
 
@@ -44,56 +44,42 @@ function getClientAuth(): Auth | null {
   return auth;
 }
 
-/** Send the Firebase sign-in link. Throws with a readable message. */
-export async function sendEmailLink(email: string): Promise<void> {
+const NEXT_KEY = "senap-next";
+
+/** Start Google sign-in via redirect (works on desktop + mobile browsers). */
+export async function beginGoogleSignIn(next: string): Promise<void> {
   const a = getClientAuth();
-  if (!a) throw new Error("Sign-in is not configured yet — try the demo account.");
-  const url = `${window.location.origin}/signin`;
+  if (!a) throw new Error("Google sign-in isn't set up yet.");
   try {
-    await sendSignInLinkToEmail(a, email, { url, handleCodeInApp: true });
-  } catch (e) {
-    throw new Error(friendlyAuthError(e));
-  }
-  try {
-    window.localStorage.setItem("senap-email-link", email);
+    window.sessionStorage.setItem(NEXT_KEY, next);
   } catch {
-    /* private mode — the link step asks for the email again */
+    /* private mode — falls back to /dashboard */
   }
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: "select_account" });
+  await signInWithRedirect(a, provider);
 }
 
-/** True when this page load is a Firebase email-link callback. */
-export function isEmailLinkCallback(): boolean {
+/** After returning from Google: ID token, or null when this isn't a callback. */
+export async function completeGoogleRedirect(): Promise<{ idToken: string; next: string } | null> {
   const a = getClientAuth();
-  if (!a || typeof window === "undefined") return false;
+  if (!a || typeof window === "undefined") return null;
+  let next = "/dashboard";
   try {
-    return isSignInWithEmailLink(a, window.location.href);
+    next = window.sessionStorage.getItem(NEXT_KEY) || "/dashboard";
   } catch {
-    return false;
+    /* ignore */
   }
-}
-
-/** Complete a Firebase email-link sign-in, returning the ID token. */
-export async function completeEmailLink(): Promise<string> {
-  const a = getClientAuth();
-  if (!a) throw new Error("Sign-in is not configured yet — try the demo account.");
-  let email: string | null = null;
+  if (!next.startsWith("/") || next.startsWith("//")) next = "/dashboard";
   try {
-    email = window.localStorage.getItem("senap-email-link");
-  } catch {
-    email = null;
-  }
-  if (!email) {
-    email = window.prompt("Confirm the email address you signed in with:");
-    if (!email) throw new Error("Email address needed to finish signing in.");
-  }
-  try {
-    const cred = await signInWithEmailLink(a, email.trim(), window.location.href);
+    const result = await getRedirectResult(a);
+    if (!result) return null;
     try {
-      window.localStorage.removeItem("senap-email-link");
+      window.sessionStorage.removeItem(NEXT_KEY);
     } catch {
       /* ignore */
     }
-    return await cred.user.getIdToken();
+    return { idToken: await result.user.getIdToken(), next };
   } catch (e) {
     throw new Error(friendlyAuthError(e));
   }
@@ -101,15 +87,14 @@ export async function completeEmailLink(): Promise<string> {
 
 function friendlyAuthError(e: unknown): string {
   const code = typeof e === "object" && e !== null && "code" in e ? String((e as { code: unknown }).code) : "";
-  if (code.includes("auth/invalid-email")) return "That doesn't look like an email address.";
-  if (code.includes("auth/operation-not-allowed"))
-    return "Email-link sign-in isn't enabled yet — turn on “Email link” under Authentication → Sign-in method in Firebase console.";
-  if (code.includes("auth/expired-action-code") || code.includes("auth/invalid-action-code"))
-    return "That link expired or was already used — request a fresh one.";
-  if (code.includes("auth/user-disabled")) return "This account is disabled.";
-  if (code.includes("auth/network-request-failed")) return "No connection — check your internet and retry.";
   if (code.includes("auth/unauthorized-domain"))
     return "This domain isn't allowed for sign-in yet — contact support.";
+  if (code.includes("auth/network-request-failed"))
+    return "No connection — check your internet and retry.";
+  if (code.includes("auth/account-exists-with-different-credential"))
+    return "That Google account is linked another way — contact support.";
+  if (code.includes("auth/user-disabled")) return "This account is disabled.";
+  if (code.includes("auth/popup-closed-by-user")) return "Sign-in was closed before finishing — try again.";
   if (e instanceof Error && e.message) return e.message;
-  return "Something went wrong — try again.";
+  return "Google sign-in failed — try again.";
 }
