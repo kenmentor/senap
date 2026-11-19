@@ -42,7 +42,7 @@ function SigninForm() {
   const next = search.get("next");
   const dest = next && next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard";
   const [missingKeys, setMissingKeys] = useState<string[]>([]);
-  const [serverReady, setServerReady] = useState<boolean | null>(null);
+  const [serverIssue, setServerIssue] = useState<null | "missing" | "invalid">(null);
   const [stage, setStage] = useState<"idle" | "redirecting" | "completing">("idle");
   const [error, setError] = useState<string | null>(null);
   const redirectTimer = useRef<number | null>(null);
@@ -73,8 +73,12 @@ function SigninForm() {
     setMissingKeys(missingFirebaseKeys());
     fetch("/api/auth/firebase")
       .then((r) => r.json())
-      .then((d) => setServerReady(typeof d.configured === "boolean" ? d.configured : null))
-      .catch(() => setServerReady(null));
+      .then((d) => {
+        if (d.configured === true) setServerIssue(null);
+        else if (d.reason === "invalid" || d.reason === "missing") setServerIssue(d.reason);
+        else setServerIssue(null);
+      })
+      .catch(() => setServerIssue(null));
     // 1) Redirect errors surface here (account-exists, unauthorized domain…).
     awaitRedirectResult()
       .then((r) => {
@@ -173,9 +177,15 @@ function SigninForm() {
         </p>
       )}
 
-      {missingKeys.length === 0 && serverReady === false && (
+      {missingKeys.length === 0 && serverIssue === "missing" && (
         <p className="mt-3 rounded-xl p-3 text-[12px]" style={{ background: "rgba(232,180,91,0.08)", color: "#e8b45b", border: "1px solid rgba(232,180,91,0.3)" }}>
-          App keys are fine — the server still needs its service key. Local: paste it into .env.local and restart. Live site: add it in Render and redeploy.
+          App keys are fine — the server key is empty. Add FIREBASE_SERVICE_ACCOUNT where the app runs, then restart (local) or redeploy (hosted).
+        </p>
+      )}
+
+      {missingKeys.length === 0 && serverIssue === "invalid" && (
+        <p className="mt-3 rounded-xl p-3 text-[12px]" style={{ background: "rgba(232,180,91,0.08)", color: "#e8b45b", border: "1px solid rgba(232,180,91,0.3)" }}>
+          App keys are fine — the server key is present but invalid. Re-paste the full one-line service-account JSON, then restart or redeploy.
         </p>
       )}
 

@@ -42,7 +42,7 @@ function underLimit(key: string, limit: number, windowMs: number): boolean {  co
 /** Liveness probe for the sign-in card: is the server key present and valid? No secrets leak. */
 export async function GET() {
   const status = await adminStatus();
-  return NextResponse.json({ configured: status.ready });
+  return NextResponse.json({ configured: status.ready, reason: status.ready ? undefined : status.reason });
 }
 
 export async function POST(req: Request) {
@@ -62,12 +62,23 @@ export async function POST(req: Request) {
   }
 
   const verified = await verifyFirebaseToken(idToken);
-  if (!verified) {
-    const status = await adminStatus();
-    if (!status.ready) {
-      console.error("[api/auth/firebase] admin SDK not ready:", status.reason ?? "unknown");
+  if (!verified.ok) {
+    if (verified.code === "unconfigured") {
+      const status = await adminStatus();
+      const why =
+        status.reason === "invalid"
+          ? "the service key is present but invalid (not usable JSON/credentials)"
+          : "the service key is missing";
+      console.error(`[api/auth/firebase] admin SDK not ready: ${status.reason ?? "unknown"}`);
       return NextResponse.json(
-        { error: "Email sign-in isn't set up on the server yet — the service key is missing or invalid. Check the terminal log." },
+        { error: `Email sign-in isn't set up on the server yet — ${why}.`, code: "server-misconfigured" },
+        { status: 503 },
+      );
+    }
+    if (verified.code === "wrong-project") {
+      console.error("[api/auth/firebase] service key belongs to a different Firebase project");
+      return NextResponse.json(
+        { error: "Server key belongs to a different Firebase project — generate it from this project's service accounts.", code: "wrong-project" },
         { status: 503 },
       );
     }
