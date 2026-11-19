@@ -365,18 +365,23 @@ export default function DashboardHome() {
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   // Onboarding journey: null = unknown, 0 = first-timer (no lines linked yet).
   const [lineCount, setLineCount] = useState<number | null>(null);
-  const [sections, setSections] = useState<Record<string, boolean>>(() => {
-    if (typeof window === "undefined") return { attention: true, growth: true };
+  // Section prefs: stored choice wins; never stored = auto (open only when
+  // there is something inside, so a new/quiet shop gets a calm page).
+  const [sections, setSections] = useState<Record<string, boolean | undefined>>(() => {
+    if (typeof window === "undefined") return {};
     try {
       const raw = window.localStorage.getItem("dashboard-home-sections");
       if (raw) {
         const p = JSON.parse(raw) as Record<string, boolean>;
-        return { attention: p.attention ?? true, growth: p.growth ?? true };
+        const next: Record<string, boolean | undefined> = {};
+        if (typeof p.attention === "boolean") next.attention = p.attention;
+        if (typeof p.growth === "boolean") next.growth = p.growth;
+        return next;
       }
     } catch {
       /* fall through */
     }
-    return { attention: true, growth: true };
+    return {};
   });
 
   const toggleSection = (id: string) => {
@@ -528,8 +533,17 @@ export default function DashboardHome() {
   const toolTotal = useMemo(() => tools.reduce((n, t) => n + (t.count || 0), 0), [tools]);
   const toolMax = rankedTools.length ? Math.max(1, rankedTools[0].count) : 1;
 
+  // Operational blocks exist only once a line is linked (a new user gets the
+  // journey card alone — never a wall of "nothing yet" empties). Sections
+  // auto-open when they gain content; an explicit tap always wins afterwards.
+  const hasLine = lineCount !== null && lineCount > 0;
+  const attentionOpen = sections.attention ?? attentionCount > 0;
+  const growthOpen = sections.growth ?? (chats.length > 0 || toolTotal > 0 || (trafficTotal ?? 0) > 0);
+
   return (
     <div className="flex flex-col gap-2.5 sm:gap-3.5">
+      {/* Status + refresh: only once there is something to refresh. */}
+      {lineCount !== 0 && (
       <div className="flex items-center justify-between gap-2">
         <p className="flex items-center gap-1.5 text-[12px]" style={{ color: "#636c73" }}>
           <span className="h-1.5 w-1.5 rounded-full" style={{ background: agentOnline ? "#00a884" : "#e66a6a" }} />
@@ -546,7 +560,7 @@ export default function DashboardHome() {
           <RefreshCw size={16} className={refreshing ? "animate-spin" : ""} />
         </button>
       </div>
-
+      )}
       {/* 0 — DOWNLOAD THE APP (signed-in owners only, never on the store) */}
       <InstallApp />
 
@@ -644,17 +658,18 @@ export default function DashboardHome() {
         </section>
       )}
 
-      {/* 1 — AGENT ACCESS (single header lives inside AgentAccess) */}
-      <AgentAccess />
+      {/* 1 — AGENT ACCESS (only once a line exists; it controls that line) */}
+      {hasLine && <AgentAccess />}
 
       {/* 2 — NEEDS YOUR ATTENTION: alerts + lined up + restocks */}
+      {hasLine && (
       <HomeSection
         id="attention"
         icon={BellRing}
         title="Needs attention"
         summary={`${visibleAlerts.length} alerts · ${scheduled.length} lined up · ${urgent.length} restocks`}
         badge={attentionCount > 0 ? attentionCount : undefined}
-        open={sections.attention}
+        open={attentionOpen}
         onToggle={toggleSection}
       >
         {visibleAlerts.map((a) => (
@@ -770,14 +785,16 @@ export default function DashboardHome() {
           )}
         </Block>
       </HomeSection>
+      )}
 
       {/* 3 — CUSTOMERS & GROWTH: stats + chats + tools + traffic */}
+      {hasLine && (
       <HomeSection
         id="growth"
         icon={TrendingUp}
         title="Customers & growth"
         summary={`${chats.length} chats · ${toolTotal} tool calls · ${trafficTotal ?? "—"} msgs`}
-        open={sections.growth}
+        open={growthOpen}
         onToggle={toggleSection}
       >
         <div className="grid grid-cols-3 divide-x py-4" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
@@ -902,6 +919,7 @@ export default function DashboardHome() {
           </div>
         </Block>
       </HomeSection>
+      )}
     </div>
   );
 }
