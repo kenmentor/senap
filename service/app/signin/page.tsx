@@ -9,7 +9,8 @@ import {
   firebaseConfigured,
   missingFirebaseKeys,
   beginGoogleSignIn,
-  completeGoogleRedirect,
+  awaitRedirectResult,
+  subscribeGoogleUser,
 } from "@/lib/firebase-client";
 
 function GoogleMark({ size = 20 }: { size?: number }) {
@@ -46,33 +47,54 @@ function SigninForm() {
 
   useEffect(() => {
     setMissingKeys(missingFirebaseKeys());
-    // Coming back from Google: verify → mint session → go.
-    (async () => {
-      let result: { idToken: string; next: string } | null = null;
-      try {
-        result = await completeGoogleRedirect();
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Google sign-in failed — try again.");
-        return;
-      }
-      if (!result) return;
+    let done = false;
+    const finish = async (idToken: string, to: string) => {
+      if (done) return;
+      done = true;
       setStage("completing");
       try {
         const res = await fetch("/api/auth/firebase", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ idToken: result.idToken }),
+          body: JSON.stringify({ idToken }),
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || "Something went wrong.");
-        const to = result.next && result.next.startsWith("/") && !result.next.startsWith("//") ? result.next : dest;
         router.push(to);
         router.refresh();
       } catch (e) {
+        done = false;
         setStage("idle");
         setError(e instanceof Error ? e.message : "Something went wrong.");
       }
-    })();
+    };
+    // 1) Redirect errors surface here (account-exists, unauthorized domain…).
+    awaitRedirectResult()
+      .then((r) => {
+        if (r) void finish(r.idToken, r.next);
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : "Google sign-in failed — try again."));
+    // 2) Observer catches the user even when the redirect handshake yields
+    // null (localhost quirk, partitioned storage) — and forwards anyone
+    // already signed in straight to the app.
+    const unsub = subscribeGoogleUser((user) => {
+      user
+        .getIdToken()
+        .then((t) => {
+          let to = dest;
+          try {
+            const raw = window.sessionStorage.getItem("senap-next");
+            if (raw && raw.startsWith("/") && !raw.startsWith("//")) to = raw;
+          } catch {
+            /* ignore */
+          }
+          void finish(t, to);
+        })
+        .catch(() => {
+          /* token unreadable — stay on sign in */
+        });
+    });
+    return unsub;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -84,8 +106,23 @@ function SigninForm() {
     setError(null);
     setStage("redirecting");
     try {
-      await beginGoogleSignIn(dest);
-      // Redirect leaves the page — if we're still here it was blocked.
+      const started = await beginGoogleSignIn(dest);
+      if ("idToken" in started) {
+        // Popup path resolves right here — no redirect involved.
+        setStage("completing");
+        const res = await fetch("/api/auth/firebase", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ idToken: started.idToken }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || "Something went wrong.");
+        router.push(started.next);
+        router.refresh();
+        return;
+      }
+      // Redirect path: the page navigates away. If we're still here the
+      // redirect was blocked — say so instead of hanging.
       setStage("idle");
       setError("The Google window was blocked — allow popups/redirects and try again.");
     } catch (e) {
