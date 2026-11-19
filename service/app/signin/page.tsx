@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import ChatWallpaper from "@/components/story/ChatWallpaper";
 import {
@@ -37,7 +37,6 @@ function GoogleMark({ size = 20 }: { size?: number }) {
 }
 
 function SigninForm() {
-  const router = useRouter();
   const search = useSearchParams();
   const next = search.get("next");
   const dest = next && next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard";
@@ -49,6 +48,10 @@ function SigninForm() {
     clientProject: string | null;
     envLen: number | null;
   }>({ serverProject: null, clientProject: null, envLen: null });
+  // True when Google already signed this browser in but the app session never
+  // stuck (bounced back here with ?next=). That combination used to fail
+  // silently — now it gets a plain-English explanation instead.
+  const [bounced, setBounced] = useState(false);
   const [stage, setStage] = useState<"idle" | "redirecting" | "completing">("idle");
   const [error, setError] = useState<string | null>(null);
   const redirectTimer = useRef<number | null>(null);
@@ -116,6 +119,9 @@ function SigninForm() {
     // null (localhost quirk, partitioned storage) — and forwards anyone
     // already signed in straight to the app.
     const unsub = subscribeGoogleUser((user) => {
+      // Google session exists. If we arrived here with ?next=, a previous
+      // login bounced: Google is fine, the app session didn't stick.
+      if (search.get("next")) setBounced(true);
       user
         .getIdToken()
         .then((t) => {
@@ -148,8 +154,14 @@ function SigninForm() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "Something went wrong.");
-      router.push(to);
-      router.refresh();
+      // Full-page navigation (not router.push): it carries the fresh session
+      // cookie through the middleware check and resets all in-memory guards.
+      // A client-side push could bounce back here with the button permanently
+      // dead (busyRef stuck) and zero feedback — that failure mode is gone.
+      busyRef.current = false;
+      setStage("idle");
+      setBounced(false);
+      window.location.assign(to);
     } catch (e) {
       busyRef.current = false;
       setStage("idle");
@@ -243,6 +255,14 @@ function SigninForm() {
             </>
           )}
         </div>
+      )}
+
+      {bounced && !error && (
+        <p className="mt-3 rounded-xl p-3 text-[12px]" style={{ background: "rgba(232,180,91,0.08)", color: "#e8b45b", border: "1px solid rgba(232,180,91,0.3)" }}>
+          Google signed you in, but the app session didn&apos;t stick, so you landed back here. This is almost always
+          the server database: allow Vercel in Atlas Network Access and confirm MONGODB_URI is set for Production,
+          then try again.
+        </p>
       )}
 
       {error && (
