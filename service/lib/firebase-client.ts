@@ -97,6 +97,8 @@ export async function completeEmailLink(): Promise<string> {
 function friendlyAuthError(e: unknown): string {
   const code = typeof e === "object" && e !== null && "code" in e ? String((e as { code: unknown }).code) : "";
   if (code.includes("auth/invalid-email")) return "That doesn't look like an email address.";
+  if (code.includes("auth/operation-not-allowed"))
+    return "Email-link sign-in isn't enabled yet — turn on “Email link” under Authentication → Sign-in method in Firebase console.";
   if (code.includes("auth/expired-action-code") || code.includes("auth/invalid-action-code"))
     return "That link expired or was already used — request a fresh one.";
   if (code.includes("auth/user-disabled")) return "This account is disabled.";
