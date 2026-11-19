@@ -96,9 +96,19 @@ function SigninForm() {
 
   return (
     <div className="w-full max-w-[400px] rounded-3xl p-7 sm:p-8" style={{ background: "rgba(17,26,33,0.85)", border: "1px solid rgba(255,255,255,0.1)", backdropFilter: "blur(18px)" }}>
-      <Link href="/" className="flex items-center gap-2.5">
-        <span className="flex h-9 w-9 items-center justify-center rounded-full text-[16px] font-extrabold" style={{ background: "#00a884", color: "#04241d" }}>S</span>
-        <span className="font-display text-[17px] font-bold" style={{ color: "#e9edef" }}>Senap</span>
+      <Link href="/" className="flex items-center gap-3">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/icons/icon-192.png"
+          alt="Senap"
+          draggable={false}
+          className="h-11 w-11 rounded-2xl"
+          style={{ boxShadow: "0 0 24px rgba(0,168,132,0.35)" }}
+        />
+        <span>
+          <span className="font-display block text-[19px] font-bold leading-tight" style={{ color: "#e9edef" }}>Senap</span>
+          <span className="block text-[11.5px]" style={{ color: "#8a949b" }}>Your shop&apos;s AI employee</span>
+        </span>
       </Link>
 
       {stage === "completing" ? (
@@ -163,15 +173,21 @@ function SigninForm() {
               className="rounded-xl px-4 text-[16px] outline-none placeholder:text-[#4a545b]"
               style={{ ...field, height: 48 }}
             />
-            <button disabled={busy !== null} className="flex min-h-[48px] items-center justify-center gap-2 rounded-xl text-[14px] font-bold transition active:scale-[0.99] disabled:opacity-50" style={{ background: "#00a884", color: "#04241d" }}>
-              {busy === "link" ? "Sending link…" : (<>Send sign-in link <ArrowRight size={16} strokeWidth={2.5} /></>)}
-            </button>
+          <button disabled={busy !== null} className="flex min-h-[48px] items-center justify-center gap-2 rounded-xl text-[14px] font-bold transition active:scale-[0.99] disabled:opacity-50" style={{ background: "#00a884", color: "#04241d" }}>
+            {busy === "link" ? "Sending link…" : (<>Send sign-in link <ArrowRight size={16} strokeWidth={2.5} /></>)}
+          </button>
           </form>
+
+          <div className="mt-4 flex items-center gap-3" aria-hidden>
+            <span className="h-px flex-1" style={{ background: "rgba(255,255,255,0.1)" }} />
+            <span className="text-[11px] font-semibold uppercase" style={{ color: "#636c73", letterSpacing: "0.1em" }}>or</span>
+            <span className="h-px flex-1" style={{ background: "rgba(255,255,255,0.1)" }} />
+          </div>
 
           <button
             onClick={demo}
             disabled={busy !== null}
-            className="mt-2.5 min-h-[48px] w-full rounded-xl text-[13.5px] font-semibold transition active:bg-white/10 disabled:opacity-50"
+            className="mt-4 min-h-[48px] w-full rounded-xl text-[13.5px] font-semibold transition active:bg-white/10 disabled:opacity-50"
             style={{ border: "1px solid rgba(255,255,255,0.12)", color: "#e9edef" }}
           >
             {busy === "demo" ? "Preparing demo…" : "Try the demo account"}

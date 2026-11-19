@@ -3,7 +3,7 @@ import { dbConnect, docId } from "@/lib/db/mongoose";
 import { User } from "@/lib/db/models/User";
 import { signSession, sessionCookie } from "@/lib/auth";
 import { settleWorkspace } from "@/lib/claims";
-import { verifyFirebaseToken } from "@/lib/firebase-admin";
+import { verifyFirebaseToken, adminStatus } from "@/lib/firebase-admin";
 
 /**
  * Firebase email-link exchange: the client proves the inbox with a Firebase
@@ -58,6 +58,14 @@ export async function POST(req: Request) {
 
   const verified = await verifyFirebaseToken(idToken);
   if (!verified) {
+    const status = await adminStatus();
+    if (!status.ready) {
+      console.error("[api/auth/firebase] admin SDK not ready:", status.reason ?? "unknown");
+      return NextResponse.json(
+        { error: "Email sign-in isn't set up on the server yet — the service key is missing or invalid. Check the terminal log." },
+        { status: 503 },
+      );
+    }
     return NextResponse.json(
       { error: "Couldn't verify that sign-in — request a fresh link." },
       { status: 401 },
@@ -85,7 +93,8 @@ export async function POST(req: Request) {
     });
     res.cookies.set(sessionCookie.name, await signSession(user.id), sessionCookie);
     return res;
-  } catch {
+  } catch (e) {
+    console.error("[api/auth/firebase] exchange failed:", e instanceof Error ? e.message : e);
     return NextResponse.json(
       { error: "Database is offline. Retry in a moment." },
       { status: 503 },
