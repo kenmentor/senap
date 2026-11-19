@@ -133,14 +133,14 @@ function SigninForm() {
 
   return (
     <div className="w-full max-w-[400px] rounded-3xl p-7 sm:p-8" style={{ background: "rgba(17,26,33,0.85)", border: "1px solid rgba(255,255,255,0.1)", backdropFilter: "blur(18px)" }}>
-      <Link href="/" className="flex items-center gap-3">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src="/icons/icon-192.png"
-          alt="Senap"
-          draggable={false}
-          className="h-10 w-10 rounded-xl"
-        />
+      <Link href="/" className="flex items-center gap-3" aria-label="Senap home">
+        <span
+          className="flex h-10 w-10 items-center justify-center rounded-xl text-[19px] font-extrabold"
+          style={{ background: "#00a884", color: "#04241d" }}
+          aria-hidden
+        >
+          S
+        </span>
         <span className="font-display block text-[19px] font-bold leading-tight" style={{ color: "#e9edef" }}>Senap</span>
       </Link>
 
