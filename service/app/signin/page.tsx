@@ -214,21 +214,34 @@ function SigninForm() {
 
       {missingKeys.length === 0 && serverIssue === "invalid" && (
         <div className="mt-3 rounded-xl p-3 text-[12px]" style={{ background: "rgba(232,180,91,0.08)", color: "#e8b45b", border: "1px solid rgba(232,180,91,0.3)" }}>
-          <p>Client keys are fine — FIREBASE_SERVICE_ACCOUNT is present but invalid.</p>
-          {serverDetail && <p className="mt-1 opacity-90">Cause: {serverDetail}</p>}
-          <p className="mt-1 opacity-90">
-            Key: FIREBASE_SERVICE_ACCOUNT
-            {typeof serverMeta.envLen === "number" ? ` (length ${serverMeta.envLen})` : ""}
-            {serverMeta.serverProject ? ` · project “${serverMeta.serverProject}”` : ""}
-            {serverMeta.clientProject ? ` · app uses “${serverMeta.clientProject}”` : ""}
-            {serverMeta.serverProject &&
-            serverMeta.clientProject &&
-            serverMeta.serverProject !== serverMeta.clientProject
-              ? " — these two projects don't match"
-              : ""}
-            .
-          </p>
-          <p className="mt-1">Re-paste the full one-line service-account JSON, then restart or redeploy.</p>
+          {/require\(\) of ES Module|jose|jwks-rsa/i.test(serverDetail ?? "") ? (
+            <>
+              <p>Client keys are fine — the server crashed loading auth libraries (jose / jwks-rsa), not your key.</p>
+              {serverDetail && <p className="mt-1 opacity-90">Cause: {serverDetail}</p>}
+              <p className="mt-1">
+                Fix: set the dashboard runtime to Node 22 (Vercel: Settings → Node Version, or engines node 22.x —
+                just pushed), then redeploy.
+              </p>
+            </>
+          ) : (
+            <>
+              <p>Client keys are fine — FIREBASE_SERVICE_ACCOUNT is present but invalid.</p>
+              {serverDetail && <p className="mt-1 opacity-90">Cause: {serverDetail}</p>}
+              <p className="mt-1 opacity-90">
+                Key: FIREBASE_SERVICE_ACCOUNT
+                {typeof serverMeta.envLen === "number" ? ` (length ${serverMeta.envLen})` : ""}
+                {serverMeta.serverProject ? ` · project “${serverMeta.serverProject}”` : ""}
+                {serverMeta.clientProject ? ` · app uses “${serverMeta.clientProject}”` : ""}
+                {serverMeta.serverProject &&
+                serverMeta.clientProject &&
+                serverMeta.serverProject !== serverMeta.clientProject
+                  ? " — these two projects don't match"
+                  : ""}
+                .
+              </p>
+              <p className="mt-1">Re-paste the full one-line service-account JSON, then restart or redeploy.</p>
+            </>
+          )}
         </div>
       )}
 
