@@ -63,11 +63,14 @@ function SigninForm() {
 
   // Safety net: if Google neither opens nor returns within 12s, hand the
   // button back with a plain message instead of hanging on a spinner.
+  // Skipped while the window is blurred — that means the popup is open and
+  // the user is busy in it, not that anything is blocked.
   useEffect(() => {
     if (stage !== "redirecting") return;
     redirectTimer.current = window.setTimeout(() => {
       setStage((s) => {
         if (s === "redirecting") {
+          if (typeof document !== "undefined" && !document.hasFocus()) return s;
           setError("Google didn't open — allow popups and try again, or use Chrome.");
         }
         return s === "redirecting" ? "idle" : s;
@@ -91,6 +94,7 @@ function SigninForm() {
       if (window.sessionStorage.getItem("senap-redirect-pending")) {
         window.sessionStorage.removeItem("senap-redirect-pending");
         setReturning(true);
+        setError(null); // stale popup-blocked error must not linger into the retry
         giveUpTimer = window.setTimeout(() => {
           setReturning(false);
           setError(
@@ -158,6 +162,7 @@ function SigninForm() {
     const unsub = subscribeGoogleUser((user) => {
       clearGiveUp();
       setReturning(false);
+      setError(null); // a fresh exchange is starting; old errors must not linger
       // Google session exists. If we arrived here with ?next=, a previous
       // login bounced: Google is fine, the app session didn't stick.
       if (search.get("next")) setBounced(true);
@@ -207,7 +212,10 @@ function SigninForm() {
     } catch (e) {
       busyRef.current = false;
       setStage("idle");
-      setError(e instanceof Error ? e.message : "Something went wrong.");
+      setBounced(false);
+      const code = authErrorCode(e);
+      const base = e instanceof Error ? e.message : "Something went wrong.";
+      setError(code ? `${base} (${code})` : base);
     }
   };
 
@@ -218,6 +226,7 @@ function SigninForm() {
       return;
     }
     setError(null);
+    setBounced(false);
     setStage("redirecting");
     try {
       const started = await beginGoogleSignIn(dest);

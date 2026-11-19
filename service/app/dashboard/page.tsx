@@ -109,9 +109,9 @@ function Block({ children }: { children: React.ReactNode }) {
 }
 
 /** Download-the-app nudge — dashboard only (never on the public store).
- *  Shows after signup until installed or dismissed. Uses the real
- *  beforeinstallprompt event when the browser offers it, otherwise
- *  platform instructions. */
+ *  Shows only when installing is actually possible (real install prompt, or
+ *  iOS with manual instructions), max 3 times, until installed or dismissed —
+ *  never a permanent nag. */
 function InstallApp() {
   const [ready, setReady] = useState(false);
   const [deferred, setDeferred] = useState<Event | null>(null);
@@ -120,6 +120,20 @@ function InstallApp() {
   const [isIos, setIsIos] = useState(false);
 
   useEffect(() => {
+    const MAX_SHOWS = 3;
+    const noteShown = (): boolean => {
+      try {
+        const n = parseInt(window.localStorage.getItem("senap-install-shown") ?? "0", 10) || 0;
+        if (n >= MAX_SHOWS) {
+          window.localStorage.setItem("senap-install-dismissed", "1");
+          return false;
+        }
+        window.localStorage.setItem("senap-install-shown", String(n + 1));
+        return true;
+      } catch {
+        return true; // private mode — show this session, hide on reload
+      }
+    };
     try {
       if (window.localStorage.getItem("senap-install-dismissed")) return;
       if (window.localStorage.getItem("senap-installed")) return;
@@ -135,8 +149,18 @@ function InstallApp() {
     } catch {
       return;
     }
-    setIsIos(/iphone|ipad|ipod/i.test(window.navigator.userAgent));
-    setReady(true);
+    const ios = /iphone|ipad|ipod/i.test(window.navigator.userAgent);
+    setIsIos(ios);
+    if (ios) {
+      // No install event on iOS — manual Share instructions, capped.
+      if (noteShown()) setReady(true);
+      return;
+    }
+    const onPrompt = (e: Event) => {
+      e.preventDefault();
+      setDeferred(e);
+      if (noteShown()) setReady(true);
+    };
     const markInstalled = () => {
       try {
         window.localStorage.setItem("senap-installed", "1");
@@ -144,10 +168,6 @@ function InstallApp() {
         /* private mode — hides until reload */
       }
       setReady(false);
-    };
-    const onPrompt = (e: Event) => {
-      e.preventDefault();
-      setDeferred(e);
     };
     window.addEventListener("beforeinstallprompt", onPrompt);
     window.addEventListener("appinstalled", markInstalled);
