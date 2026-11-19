@@ -52,6 +52,8 @@ function SigninForm() {
   // stuck (bounced back here with ?next=). That combination used to fail
   // silently — now it gets a plain-English explanation instead.
   const [bounced, setBounced] = useState(false);
+  // True while we wait for a Google redirect to resolve after it sent us back.
+  const [returning, setReturning] = useState(false);
   const [stage, setStage] = useState<"idle" | "redirecting" | "completing">("idle");
   const [error, setError] = useState<string | null>(null);
   const redirectTimer = useRef<number | null>(null);
@@ -80,6 +82,30 @@ function SigninForm() {
 
   useEffect(() => {
     setMissingKeys(missingFirebaseKeys());
+    // Did we just come back from a Google redirect? If so, something must
+    // resolve within seconds (redirect result or observer) — otherwise the
+    // redirect died silently, and we say so instead of "refreshing".
+    let giveUpTimer: number | null = null;
+    try {
+      if (window.sessionStorage.getItem("senap-redirect-pending")) {
+        window.sessionStorage.removeItem("senap-redirect-pending");
+        setReturning(true);
+        giveUpTimer = window.setTimeout(() => {
+          setReturning(false);
+          setError(
+            "Google sent you back but sign-in didn't complete in this browser. Try desktop Chrome, or tap the button again with popups allowed.",
+          );
+        }, 9000);
+      }
+    } catch {
+      /* private mode — skip the diagnosis hint */
+    }
+    const clearGiveUp = () => {
+      if (giveUpTimer !== null) {
+        window.clearTimeout(giveUpTimer);
+        giveUpTimer = null;
+      }
+    };
     fetch("/api/auth/firebase")
       .then((r) => r.json())
       .then((d) => {
@@ -112,13 +138,23 @@ function SigninForm() {
     // 1) Redirect errors surface here (account-exists, unauthorized domain…).
     awaitRedirectResult()
       .then((r) => {
-        if (r) void finish(r.idToken, r.next);
+        if (r) {
+          clearGiveUp();
+          setReturning(false);
+          void finish(r.idToken, r.next);
+        }
       })
-      .catch((e) => setError(e instanceof Error ? e.message : "Google sign-in failed — try again."));
+      .catch((e) => {
+        clearGiveUp();
+        setReturning(false);
+        setError(e instanceof Error ? e.message : "Google sign-in failed — try again.");
+      });
     // 2) Observer catches the user even when the redirect handshake yields
     // null (localhost quirk, partitioned storage) — and forwards anyone
     // already signed in straight to the app.
     const unsub = subscribeGoogleUser((user) => {
+      clearGiveUp();
+      setReturning(false);
       // Google session exists. If we arrived here with ?next=, a previous
       // login bounced: Google is fine, the app session didn't stick.
       if (search.get("next")) setBounced(true);
@@ -138,7 +174,10 @@ function SigninForm() {
           /* token unreadable — stay on sign in */
         });
     });
-    return unsub;
+    return () => {
+      clearGiveUp();
+      unsub();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -262,6 +301,12 @@ function SigninForm() {
           Google signed you in, but the app session didn&apos;t stick, so you landed back here. This is almost always
           the server database: allow Vercel in Atlas Network Access and confirm MONGODB_URI is set for Production,
           then try again.
+        </p>
+      )}
+
+      {returning && !error && stage === "idle" && (
+        <p className="mt-3 flex items-center gap-2 rounded-xl p-3 text-[12px]" style={{ background: "rgba(255,255,255,0.06)", color: "#e9edef", border: "1px solid rgba(255,255,255,0.12)" }}>
+          <Loader2 size={14} className="animate-spin" /> Completing Google sign-in…
         </p>
       )}
 

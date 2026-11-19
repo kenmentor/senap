@@ -88,19 +88,28 @@ export async function beginGoogleSignIn(next: string): Promise<GoogleStart> {
   }
   const provider = new GoogleAuthProvider();
   provider.setCustomParameters({ prompt: "select_account" });
+  const markRedirect = () => {
+    try {
+      window.sessionStorage.setItem("senap-redirect-pending", String(Date.now()));
+    } catch {
+      /* private mode — diagnosis hint just won't show */
+    }
+  };
   if (isMobileBrowser()) {
+    markRedirect();
     await signInWithRedirect(a, provider);
     return { redirected: true };
   }
   try {
     const cred = await signInWithPopup(a, provider);
     return { idToken: await cred.user.getIdToken(), next: loadNext(next) };
-  } catch (e) {
-    const code = codeOf(e);
-    if (code.includes("auth/popup-blocked")) {
-      await signInWithRedirect(a, provider);
-      return { redirected: true };
-    }
+    } catch (e) {
+      const code = codeOf(e);
+      if (code.includes("auth/popup-blocked")) {
+        markRedirect();
+        await signInWithRedirect(a, provider);
+        return { redirected: true };
+      }
     throw new Error(friendlyAuthError(e));
   }
 }
