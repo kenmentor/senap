@@ -683,21 +683,25 @@ export class WhatsappSession {
     let managed: GroupContext["managed"] = null;
     let threshold = 0.3;
     try {
-      const { getGroupAgent } = await import("./agent-tools/group-agent-store.js");
-      const cfg = await getGroupAgent(this.userId, chatJid);
+      const { getGroupAgent, normalizeMode, effectiveThreshold } = await import("./agent-tools/group-agent-store.js");
+      const cfg = await getGroupAgent(this.userId, chatJid).catch(() => null);
       if (cfg?.enabled) {
+        // Legacy configs predate modes (no mode field): keep their tuned
+        // threshold untouched. New configs always carry a mode whose floor
+        // applies — quiet groups stay quiet even with a chatty threshold.
+        const mode = normalizeMode((cfg as { mode?: unknown }).mode, "active");
+        const floorApplies = "mode" in (cfg as unknown as Record<string, unknown>);
         managed = {
           name: cfg.name,
           role: cfg.role,
           personality: cfg.personality,
           duty: cfg.duty,
+          mode,
           maxPerDay: cfg.maxPerDay,
           styleExamples: cfg.styleExamples.length > 0 ? cfg.styleExamples : this.recentUserTexts(chatJid, 12),
         };
-        threshold =
-          typeof cfg.replyThreshold === "number"
-            ? Math.min(1, Math.max(0, cfg.replyThreshold))
-            : 0.35;
+        const configured = typeof cfg.replyThreshold === "number" ? cfg.replyThreshold : 0.35;
+        threshold = floorApplies ? effectiveThreshold(mode, configured) : Math.min(1, Math.max(0, configured));
       }
     } catch {
       /* proceed unmanaged */
@@ -2446,12 +2450,12 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
         if (log.length > 0) this.backdropTs.set(remoteJid, log[log.length - 1].ts);
       }
       history.append("user", displayText);
-      // Voice cloning + saved manner notes in PARALLEL (two independent
-      // reads — sequential awaits used to cost a full roundtrip each).
+      // Voice cloning + saved manner notes + group social memory in PARALLEL
+      // (independent reads — sequential awaits used to cost full roundtrips).
       // Voice mirror: 1:1 customers only; groups follow the group persona,
       // the owner gets direct [agent] efficiency. Cold profiles return null.
       const historyLen = history.all().length;
-      const [style, promptNotes] = await Promise.all([
+      const [style, promptNotes, groupSocialText] = await Promise.all([
         !isGroupChat && !isOwnerEarly
           ? import("./style-profile.js")
               .then((m) => m.styleDirectiveFor(this.userId, remoteJid, text, historyLen > 1))
@@ -2460,7 +2464,22 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
         import("./agent-tools/prompt-note-tools.js")
           .then((m) => m.getPromptNotesBlock(this.userId, remoteJid))
           .catch(() => null),
+        // SGI social memory: purpose, rules, once-only intro (groups only).
+        isGroupChat
+          ? import("./social/group-memory.js")
+              .then(async (m) => {
+                const social = await m.loadGroupSocial(this.userId, remoteJid).catch(() => null);
+                return social ? m.groupSocialBlock(social) : null;
+              })
+              .catch(() => null)
+          : Promise.resolve(null),
       ]);
+      // SGI member touch: liveness only — no profiling, no labels.
+      if (isGroupChat && key.participant) {
+        import("./social/group-memory.js")
+          .then((m) => m.touchGroupMember(this.userId, remoteJid, key.participant as string, pushName ?? "unknown", false))
+          .catch(() => {});
+      }
       this.rememberContact(remoteJid, pushName ?? undefined);
       if (!alreadyLogged && rawForLog) this.logIncoming(remoteJid, rawForLog, displayText, kind);
       // All socket writes go through the session-wide serializer: one account,
@@ -2489,6 +2508,7 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
       // Group reply gate: confidence-scored, so the bot doesn't answer every
       // message like a bot would. 1:1 chats always reply (unchanged).
       let group: GroupContext | null = null;
+      let moderationForAgent: { severity: number; ruleId: string; reason: string } | null = null;
       if (remoteJid.endsWith("@g.us")) {
         group = await this.groupContext(remoteJid).catch(() => null);
         if (group) {
@@ -2524,12 +2544,13 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
           const SILENT_BELOW = 0.15;
           let decision: "reply" | "silent" = score >= Math.max(REPLY_AT, group.threshold) || isOwner ? "reply" : "silent";
           let participationReason = "score-band";
+          let rolesOn: string[] = [];
           try {
             const { decideParticipation, maySpeak, looksAnswered } = await import("./social/participation.js");
             const { loadRoles } = await import("./agent-tools/store.js");
             const { normalizeRoles, ROLE_ORDER } = await import("../roles/roles.js");
             const rawRoles = await loadRoles(this.userId).catch(() => null);
-            const rolesOn = (ROLE_ORDER as string[]).filter((k) => (normalizeRoles(rawRoles) as Record<string, boolean>)[k]);
+            rolesOn = (ROLE_ORDER as string[]).filter((k) => (normalizeRoles(rawRoles) as Record<string, boolean>)[k]);
             const recentTexts = (this.messageLog.get(remoteJid) ?? [])
               .slice(-4)
               .map((e) => (e.text.length > 160 ? `${e.text.slice(0, 160)}…` : e.text));
@@ -2572,6 +2593,43 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
             reasons.push(participationReason);
           } catch {
             /* participation unreadable — score bands still apply */
+          }
+          // SGI moderation analyzer: runs EVEN when participation stays silent.
+          // A message can need an administrative response without deserving a
+          // conversational one. L2 warns (moderator duty required); L3+ always
+          // surfaces to the owner. Never auto-removes — human approval only.
+          if (!isOwner) {
+            try {
+              const { analyzeModeration, recordIncident, recentIncidentCount } = await import("./social/moderation.js");
+              const senderJid = key.participant ?? remoteJid;
+              let verdict = analyzeModeration(incomingText, { quotedText });
+              if (verdict.severity === 1 && verdict.ruleId === "SPAM_001") {
+                const priors = await recentIncidentCount(this.userId, remoteJid, senderJid).catch(() => 0);
+                if (priors >= 1) {
+                  verdict = { ...verdict, severity: 2, reason: "repeated-spam" };
+                }
+              }
+              if (verdict.severity >= 2) {
+                const moderatorOn = rolesOn.includes("moderator");
+                if (verdict.severity >= 3 || moderatorOn) {
+                  decision = "reply";
+                  moderationForAgent = { severity: verdict.severity, ruleId: verdict.ruleId, reason: verdict.reason };
+                  reasons.push(`moderation-L${verdict.severity}(${verdict.reason})`);
+                } else {
+                  reasons.push(`moderation-suppressed(duty-off)`);
+                }
+                void recordIncident({
+                  userId: this.userId,
+                  groupJid: remoteJid,
+                  messageId: mid ?? `nomid-${Date.now()}`,
+                  senderJid,
+                  verdict,
+                  action: verdict.severity >= 3 ? "escalate:notify_owner" : moderatorOn ? "warn" : "observe:duty-off",
+                });
+              }
+            } catch {
+              /* moderation is best-effort */
+            }
           }
           if (decision === "silent" && !isOwner && score >= SILENT_BELOW && participationReason.includes("ambiguous-probe")) {
             const recent = (this.messageLog.get(remoteJid) ?? [])
@@ -2705,6 +2763,8 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
           group,
           style,
           promptNotes,
+          groupSocial: groupSocialText,
+          moderation: moderationForAgent,
         });
       } catch (error) {
         // Model outage (dead token, quota exhausted, timeout): stay SILENT
@@ -2761,6 +2821,12 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
           text,
         });
         await markProcessed(this.userId, remoteJid, mid, new Date(sentAt));
+        // SGI: intro was just delivered — never repeat it.
+        if (isGroupChat && groupSocialText) {
+          import("./social/group-memory.js")
+            .then((m) => m.saveGroupSocialPatch(this.userId, remoteJid, { introSent: true }))
+            .catch(() => {});
+        }
       } catch (error) {
         // Delivery itself failed (line dropped mid-reply): do NOT ledger it —
         // catch-up / the next message will retry instead of losing the task.

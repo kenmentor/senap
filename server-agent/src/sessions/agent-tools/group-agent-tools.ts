@@ -11,6 +11,9 @@ import {
   deletePendingChain,
   nextPendingRun,
   repeatKeyFor,
+  normalizeMode,
+  MODE_FLOORS,
+  type GroupMode,
 } from "./group-agent-store.js";
 
 const MIN_INTERVAL_HOURS = 1;
@@ -77,7 +80,10 @@ export const groupAgentTools: ToolDefinition[] = [
         duty: { type: "string", description: "Extra standing duty (e.g. 'drop weekend deals every Friday')." },
         intervalHours: { type: "number", description: `Engagement rhythm in hours, ${MIN_INTERVAL_HOURS}-${MAX_INTERVAL_HOURS} (default ${DEFAULT_INTERVAL_HOURS}).` },
         maxPerDay: { type: "number", description: "Hard cap on engagement messages per day (default 4, max 20)." },
-        replyThreshold: { type: "number", description: "Reply confidence 0-1 (default 0.3 = active). Scale: 0.15 very active (replies to most chat), 0.3 active (default, lively but human), 0.45 balanced (answers when relevant/addressed), 0.65 quiet (only direct mentions), 0.8+ nearly invisible. WARNING: 0.6+ goes stale fast — the group will look dead and members stop tagging it, so it may never be helpful. Prefer 0.25-0.35 for lively groups, never exceed 0.5 unless the owner explicitly wants silence." },
+        replyThreshold: { type: "number", description: "Reply confidence 0-1 (default by mode: quiet 0.65, active 0.3, manager 0.25). Scale: 0.15 very active, 0.3 active (recommended), 0.45 balanced, 0.65 quiet, 0.8+ invisible. WARNING: above 0.6 the agent goes stale and stops being helpful — keep 0.25-0.35 unless owner explicitly wants silence." },
+        mode: { type: "string", description: "Participation mode: quiet (default — only addressed/tasked/intervening), active (assists relevant threads), manager (also welcomes + organizes). The mode floor always applies." },
+        purpose: { type: "string", description: "What this group is for (business community, student group, support...). Shapes how Senap behaves without changing its character." },
+        intro: { type: "string", description: "Owner-approved introduction, sent ONCE on first participation, never repeated." },
       },
       required: ["groupJid"],
       additionalProperties: false,
@@ -90,11 +96,16 @@ export const groupAgentTools: ToolDefinition[] = [
         Math.max(MIN_INTERVAL_HOURS, Math.round(toolArgs.asNumber(args.intervalHours, DEFAULT_INTERVAL_HOURS))),
       );
       const maxPerDay = Math.min(20, Math.max(1, Math.round(toolArgs.asNumber(args.maxPerDay, 4))));
-      const replyThreshold = Math.min(1, Math.max(0, Number(toolArgs.asNumber(args.replyThreshold, 0.3)) || 0));
+      const mode: GroupMode = normalizeMode(toolArgs.asString(args.mode));
+      const rtRaw = toolArgs.asNumber(args.replyThreshold, -1);
+      const replyThreshold =
+        rtRaw >= 0 ? Math.min(1, Math.max(0, rtRaw)) : MODE_FLOORS[mode];
       const name = toolArgs.asString(args.name).trim().slice(0, 60);
       const role = toolArgs.asString(args.role).trim().slice(0, 120);
       const personality = toolArgs.asString(args.personality).trim().slice(0, 300);
       const duty = toolArgs.asString(args.duty).trim().slice(0, 300);
+      const purpose = toolArgs.asString(args.purpose).trim().slice(0, 300);
+      const intro = toolArgs.asString(args.intro).trim().slice(0, 500);
 
       // Analyze the group from the live session: subject, size, own standing.
       let subject = "this group";
@@ -145,6 +156,7 @@ export const groupAgentTools: ToolDefinition[] = [
         role,
         personality,
         duty,
+        mode,
         intervalHours,
         maxPerDay,
         replyThreshold,
@@ -155,6 +167,18 @@ export const groupAgentTools: ToolDefinition[] = [
         jobId: String(doc._id),
       };
       await saveGroupAgent(baseCfg);
+      // Group social memory: purpose + owner-approved intro (sent once).
+      if (purpose || intro) {
+        try {
+          const { saveGroupSocialPatch } = await import("../social/group-memory.js");
+          await saveGroupSocialPatch(ctx.userId, groupJid, {
+            ...(purpose ? { purpose } : {}),
+            ...(intro ? { intro, introSent: false } : {}),
+          });
+        } catch {
+          /* memory is best-effort */
+        }
+      }
 
       // Activation implies access: allow-list the group so its messages are
       // never swallowed by EXCLUSIVE mode (lifts a STOP block too — reported).
@@ -184,6 +208,7 @@ export const groupAgentTools: ToolDefinition[] = [
         group: subject,
         members,
         amAdmin,
+        mode,
         intervalHours,
         maxPerDay,
         styleSamples: style.length,
@@ -198,7 +223,7 @@ export const groupAgentTools: ToolDefinition[] = [
   {
     name: "update_group_agent",
     description:
-      "OWNER ONLY. Change a group's agent persona, rhythm, or reply chattiness (any subset of name/role/personality/duty/intervalHours/maxPerDay/replyThreshold). Changing the rhythm restarts its recurring loop from now.",
+      "OWNER ONLY. Change a group's agent persona, rhythm, participation mode, or reply chattiness (any subset of name/role/personality/duty/mode/intervalHours/maxPerDay/replyThreshold). Changing the rhythm restarts its recurring loop from now.",
     scope: "owner",
     parameters: {
       type: "object",
@@ -208,9 +233,12 @@ export const groupAgentTools: ToolDefinition[] = [
         role: { type: "string" },
         personality: { type: "string" },
         duty: { type: "string" },
+        mode: { type: "string", description: "quiet | active | manager. Quiet only speaks when addressed/tasked/intervening." },
+        purpose: { type: "string", description: "What this group is for." },
+        intro: { type: "string", description: "Owner-approved intro, sent once. Empty string clears a pending intro." },
         intervalHours: { type: "number" },
         maxPerDay: { type: "number" },
-        replyThreshold: { type: "number", description: "Reply confidence 0-1. Scale: 0.15 very active, 0.3 active (recommended), 0.45 balanced, 0.65 quiet, 0.8+ invisible. WARNING: above 0.6 the agent goes stale and stops being helpful — keep 0.25-0.35 unless owner explicitly wants silence." },
+        replyThreshold: { type: "number", description: "Reply confidence 0-1. The mode floor always applies (quiet 0.65, active 0.35, manager 0.25)." },
       },
       required: ["groupJid"],
       additionalProperties: false,
@@ -225,6 +253,8 @@ export const groupAgentTools: ToolDefinition[] = [
         const v = toolArgs.asString((args as Record<string, unknown>)[k]).trim();
         if (v) patch[k] = v.slice(0, k === "name" ? 60 : k === "role" ? 120 : 300);
       }
+      const modeRaw = toolArgs.asString(args.mode).trim();
+      if (modeRaw) patch.mode = normalizeMode(modeRaw);
       const iv = toolArgs.asNumber(args.intervalHours, 0);
       if (iv > 0) patch.intervalHours = Math.min(MAX_INTERVAL_HOURS, Math.max(MIN_INTERVAL_HOURS, Math.round(iv)));
       const mp = toolArgs.asNumber(args.maxPerDay, 0);
@@ -233,6 +263,25 @@ export const groupAgentTools: ToolDefinition[] = [
       if (rt >= 0) patch.replyThreshold = Math.min(1, Math.max(0, rt));
       const merged = { ...existing, ...patch, enabled: true };
       await saveGroupAgent(merged);
+      // Purpose / intro live in group social memory (owner-approved, intro sent once).
+      try {
+        const purpose = toolArgs.asString(args.purpose).trim().slice(0, 300);
+        const introRaw = toolArgs.asString(args.intro);
+        if (purpose || introRaw) {
+          const { saveGroupSocialPatch, loadGroupSocial } = await import("../social/group-memory.js");
+          if (purpose) await saveGroupSocialPatch(ctx.userId, groupJid, { purpose });
+          if (introRaw) {
+            const trimmed = introRaw.trim().slice(0, 500);
+            const cur = await loadGroupSocial(ctx.userId, groupJid).catch(() => null);
+            await saveGroupSocialPatch(ctx.userId, groupJid, {
+              intro: trimmed,
+              introSent: trimmed ? false : (cur?.introSent ?? true),
+            });
+          }
+        }
+      } catch {
+        /* memory is best-effort */
+      }
 
       // Rhythm changed → restart the loop so the new cadence takes effect now.
       if (patch.intervalHours !== undefined || patch.maxPerDay !== undefined || patch.duty !== undefined) {
@@ -334,12 +383,65 @@ export const groupAgentTools: ToolDefinition[] = [
         enabled: cfg.enabled,
         name: cfg.name,
         role: cfg.role,
+        mode: cfg.mode ?? "quiet",
         intervalHours: cfg.intervalHours,
         maxPerDay: cfg.maxPerDay,
         replyThreshold: typeof cfg.replyThreshold === "number" ? cfg.replyThreshold : 0.5,
         sentToday,
         nextRunAt: next ? next.toISOString() : null,
       };
+    },
+  },
+  {
+    name: "set_group_rules",
+    description:
+      "OWNER ONLY. Set this group's agreed rules as structured policies (max 10): each has a short id, what it means, severity (low/medium/high/critical) and the default action (observe/warn/escalate/urgent_admin_review). Rules shape Senap's moderation — disagreements, jokes and criticism are never violations. Replaces the whole list; pass an empty array to clear.",
+    scope: "owner",
+    parameters: {
+      type: "object",
+      properties: {
+        groupJid: { type: "string", description: "Group JID ending in @g.us. Defaults to the current chat." },
+        rules: {
+          type: "array",
+          description: "Agreed rules.",
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              description: { type: "string" },
+              severity: { type: "string" },
+              action: { type: "string" },
+            },
+            required: ["description"],
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    execute: async (args, ctx) => {
+      await ensureMongo();
+      const raw = toolArgs.asString(args.groupJid).trim() || ctx.customerJid;
+      const groupJid = raw.includes("@") ? raw : normalizeJid(raw);
+      if (!groupJid.endsWith("@g.us")) return { error: "That is not a group chat." };
+      const clean = toolArgs
+        .asArray(args.rules)
+        .slice(0, 10)
+        .map((r, i) => {
+          const rec = toolArgs.asRecord(r);
+          const sev = toolArgs.asString(rec.severity).toLowerCase();
+          const act = toolArgs.asString(rec.action).toLowerCase();
+          return {
+            id: toolArgs.asString(rec.id).trim().slice(0, 20) || `RULE_${i + 1}`,
+            description: toolArgs.asString(rec.description).trim().slice(0, 200),
+            severity: (["low", "medium", "high", "critical"].includes(sev) ? sev : "medium") as "low" | "medium" | "high" | "critical",
+            action: (["observe", "warn", "escalate", "urgent_admin_review"].includes(act) ? act : "warn") as "observe" | "warn" | "escalate" | "urgent_admin_review",
+          };
+        })
+        .filter((r) => r.description.length > 0);
+      const { saveGroupSocialPatch } = await import("../social/group-memory.js");
+      await saveGroupSocialPatch(ctx.userId, groupJid, { rules: clean });
+      return { rulesSet: clean.length, rules: clean };
     },
   },
   {

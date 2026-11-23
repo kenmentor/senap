@@ -57,6 +57,10 @@ export interface AssistantRequest {
   scheduledTask?: ScheduledTaskProvenance;
   /** Group awareness for @g.us chats (role, persona, house style). */
   group?: GroupContext | null;
+  /** Group social memory: purpose, rules, once-only intro (groups only). */
+  groupSocial?: string | null;
+  /** Moderation verdict for this turn (groups only). Drives warn/escalate policy. */
+  moderation?: { severity: number; ruleId: string; reason: string } | null;
   /** Per-customer voice mirror for 1:1 chats (null = house voice / cold profile). */
   style?: string | null;
   /** Saved manner notes for this chat + line (null = none yet). */
@@ -77,6 +81,12 @@ function groupBlock(g: GroupContext): string {
     : " You were NOT directly addressed in this message — one short line max, then step back; a reaction beats a new topic.";
   const m = g.managed;
   const who = m.name ? `${m.name}${m.role ? `, ${m.role}` : ""}` : "the group's assistant";
+  const modeLine =
+    m.mode === "manager"
+      ? " Participation mode: MANAGER — assist, welcome newcomers once, keep order lightly."
+      : m.mode === "active"
+        ? " Participation mode: ACTIVE — answer relevant questions, help where useful, otherwise stay quiet."
+        : " Participation mode: QUIET — speak only when addressed, tasked, or intervening. Silence is correct most of the time.";
   const style =
     m.styleExamples.length > 0
       ? ` How this group actually talks (match it, don't overdo it): ${m.styleExamples.map((s) => `"${s}"`).join(" · ")}`
@@ -85,6 +95,7 @@ function groupBlock(g: GroupContext): string {
     `${head}${thresh} Your standing job here: you are ${who} — a present, warm moderator, not a lurker. React to the vibe, acknowledge people, keep order lightly.` +
     (m.personality ? ` Come across as: ${m.personality}.` : "") +
     (m.duty ? ` Extra duty: ${m.duty}.` : "") +
+    modeLine +
     unaddressed +
     style +
     ` House rules: speak briefly and rarely — reactions and short replies beat new topics; never repeat recent messages; no AI talk, no hashtags, no lectures. ` +
@@ -420,6 +431,23 @@ export async function handleCustomerMessage(
     ...(() => {
       const s = salesState ? salesStateBlock(salesState) : null;
       return s ? [{ role: "system" as const, content: s }] : [];
+    })(),
+    // SGI: group social memory (purpose, rules, once-only intro).
+    ...(req.groupSocial ? [{ role: "system" as const, content: req.groupSocial }] : []),
+    // SGI moderation duty: brief warn once at L2; L3+ notify_owner with evidence. Never remove members.
+    ...(() => {
+      const m = req.moderation;
+      if (!m || m.severity < 2) return [];
+      if (m.severity === 2) {
+        return [{
+          role: "system" as const,
+          content: `Moderation duty [${m.ruleId} ${m.reason}]: give ONE brief, respectful warning in the group's own voice — no lecture, no announcement voice, no pile-on. Then move on.`,
+        }];
+      }
+      return [{
+        role: "system" as const,
+        content: `Safety duty [${m.ruleId} ${m.reason}, severity ${m.severity}]: do NOT warn publicly. Call notify_owner IMMEDIATELY with the evidence and stay calm in the group. Never remove members yourself.`,
+      }];
     })(),
     ...(() => {
       const p = customerProfile ? profileBlock(customerProfile) : null;

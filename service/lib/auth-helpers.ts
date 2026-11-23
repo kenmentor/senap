@@ -6,7 +6,7 @@ import { User } from "@/lib/db/models/User";
 import { LinkedAccount } from "@/lib/db/models/LinkedAccount";
 import { settleWorkspace } from "@/lib/claims";
 
-export type SessionUser = { id: string; email: string; name: string };
+export type SessionUser = { id: string; email: string; name: string; isPlatformAdmin: boolean };
 
 /** Logged-in dashboard user, or null. Every dashboard API starts here. */
 export async function sessionUser(): Promise<SessionUser | null> {
@@ -16,12 +16,12 @@ export async function sessionUser(): Promise<SessionUser | null> {
     const uid = await verifySession(token);
     if (!uid) return null;
     await dbConnect();
-    const user = await User.findById(uid).select("email name").lean();
+    const user = await User.findById(uid).select("email name isPlatformAdmin").lean();
     if (!user?.email) return null;
     // One-time workspace settlement (first real email adopts pre-launch data;
     // later emails start empty). No-op after the first call per instance.
     await settleWorkspace(String(user._id), user.email);
-    return { id: String(user._id), email: user.email, name: user.name || "Business owner" };
+    return { id: String(user._id), email: user.email, name: user.name || "Business owner", isPlatformAdmin: user.isPlatformAdmin === true };
   } catch {
     return null;
   }

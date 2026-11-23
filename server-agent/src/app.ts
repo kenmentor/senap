@@ -342,6 +342,9 @@ app.post("/sessions/:userId/group-agent/setup", async (c) => {
     role?: string;
     personality?: string;
     duty?: string;
+    mode?: string;
+    purpose?: string;
+    intro?: string;
     intervalHours?: number;
     maxPerDay?: number;
     replyThreshold?: number;
@@ -355,8 +358,9 @@ app.post("/sessions/:userId/group-agent/setup", async (c) => {
     const { JobModel } = await import("./sessions/agent-tools/jobs.js");
     const intervalHours = Math.min(168, Math.max(1, Math.round(Number(body.intervalHours ?? 6) || 6)));
     const maxPerDay = Math.min(20, Math.max(1, Math.round(Number(body.maxPerDay ?? 4) || 4)));
+    const mode = store.normalizeMode(body.mode);
     const rtRaw = Number(body.replyThreshold);
-    const replyThreshold = Number.isFinite(rtRaw) ? Math.min(1, Math.max(0, rtRaw)) : 0.45;
+    const replyThreshold = Number.isFinite(rtRaw) ? Math.min(1, Math.max(0, rtRaw)) : store.MODE_FLOORS[mode];
     const details = await session.groupDetails(groupJid);
     const repeatKey = store.repeatKeyFor(userId, groupJid);
     await store.deletePendingChain(userId, repeatKey);
@@ -393,6 +397,7 @@ app.post("/sessions/:userId/group-agent/setup", async (c) => {
       role: String(body.role ?? "").trim().slice(0, 120),
       personality: String(body.personality ?? "").trim().slice(0, 300),
       duty: String(body.duty ?? "").trim().slice(0, 300),
+      mode,
       intervalHours,
       maxPerDay,
       replyThreshold,
@@ -403,6 +408,20 @@ app.post("/sessions/:userId/group-agent/setup", async (c) => {
       jobId: String(doc._id),
     };
     await store.saveGroupAgent(baseCfg);
+    // Group social memory: purpose + owner-approved intro (sent once).
+    const purpose = String(body.purpose ?? "").trim().slice(0, 300);
+    const intro = String(body.intro ?? "").trim().slice(0, 500);
+    if (purpose || intro) {
+      try {
+        const { saveGroupSocialPatch } = await import("./sessions/social/group-memory.js");
+        await saveGroupSocialPatch(userId, groupJid, {
+          ...(purpose ? { purpose } : {}),
+          ...(intro ? { intro, introSent: false } : {}),
+        });
+      } catch {
+        /* memory is best-effort */
+      }
+    }
     // Activation implies access: allow-list the group so EXCLUSIVE mode lets
     // its messages through (lifts a STOP block too — reported).
     let accessNote = "";
@@ -424,6 +443,7 @@ app.post("/sessions/:userId/group-agent/setup", async (c) => {
       group: details.subject,
       members: details.members,
       amAdmin: details.isAdmin,
+      mode,
       intervalHours,
       maxPerDay,
       replyThreshold,

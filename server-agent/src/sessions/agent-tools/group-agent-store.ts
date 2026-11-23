@@ -8,6 +8,29 @@ import { JobModel } from "./jobs.js";
  * that group independently: persona + style + recurring engagement jobs.
  */
 
+export type GroupMode = "quiet" | "active" | "manager";
+
+/** Participation floors: the minimum quietness per mode. Quiet (default) only
+ *  speaks when addressed, tasked, or intervening; active assists relevant
+ *  threads; manager additionally welcomes and organizes. */
+export const MODE_FLOORS: Record<GroupMode, number> = {
+  quiet: 0.65,
+  active: 0.35,
+  manager: 0.25,
+};
+
+export function normalizeMode(raw: unknown, fallback: GroupMode = "quiet"): GroupMode {
+  if (raw === "active" || raw === "manager" || raw === "quiet") return raw;
+  return fallback;
+}
+
+/** Effective reply threshold: the mode floor always applies (a quiet group
+ *  stays quiet even with a chatty legacy threshold); owners can go quieter. */
+export function effectiveThreshold(mode: GroupMode, configured: number): number {
+  const c = Number.isFinite(configured) ? Math.min(1, Math.max(0, configured)) : MODE_FLOORS[mode];
+  return Math.max(c, MODE_FLOORS[mode]);
+}
+
 export interface GroupAgentConfig {
   userId: string;
   groupJid: string;
@@ -16,6 +39,8 @@ export interface GroupAgentConfig {
   role: string;
   personality: string;
   duty: string;
+  /** Participation mode: quiet (default) | active | manager. */
+  mode: GroupMode;
   intervalHours: number;
   maxPerDay: number;
   /** Reply confidence threshold 0..1 (lower = chattier). Default 0.3 (active). */
@@ -49,6 +74,7 @@ const GroupAgentSchema = new Schema<GroupAgentRow>(
     intervalHours: { type: Number, default: 6 },
     maxPerDay: { type: Number, default: 4 },
     replyThreshold: { type: Number, default: 0.3 },
+    mode: { type: String, default: "quiet" },
     subject: { type: String, default: "" },
     autoWhitelisted: { type: Boolean, default: false },
     styleExamples: { type: [String], default: [] },
@@ -87,6 +113,7 @@ export async function getGroupAgent(userId: string, groupJid: string): Promise<G
     intervalHours: doc.intervalHours ?? 6,
     maxPerDay: doc.maxPerDay ?? 4,
     replyThreshold: typeof doc.replyThreshold === "number" ? doc.replyThreshold : 0.45,
+    mode: normalizeMode((doc as { mode?: unknown }).mode),
     subject: doc.subject ?? "",
     autoWhitelisted: doc.autoWhitelisted ?? false,
     styleExamples: doc.styleExamples ?? [],
@@ -124,6 +151,7 @@ export async function saveGroupAgent(
     intervalHours: out.intervalHours ?? 6,
     maxPerDay: out.maxPerDay ?? 4,
     replyThreshold: typeof out.replyThreshold === "number" ? out.replyThreshold : 0.45,
+    mode: normalizeMode((out as { mode?: unknown }).mode),
     subject: out.subject ?? "",
     autoWhitelisted: out.autoWhitelisted ?? false,
     styleExamples: out.styleExamples ?? [],

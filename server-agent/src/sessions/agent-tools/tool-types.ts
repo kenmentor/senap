@@ -55,6 +55,8 @@ export interface GroupContext {
     role: string;
     personality: string;
     duty: string;
+    /** Participation mode: quiet (default) | active | manager. */
+    mode: string;
     maxPerDay: number;
     styleExamples: string[];
   } | null;

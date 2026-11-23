@@ -71,7 +71,7 @@ export default function AdminPage() {
         <p className="mt-3 text-[15px] font-bold" style={{ color: "#fff" }}>Platform admin only</p>
         <p className="mt-1 text-[12.5px]" style={{ color: "#8a949b" }}>
           {denied
-            ? "This account is not a platform admin. Set PLATFORM_ADMIN_EMAILS to include your login email."
+            ? "This account is not a platform admin."
             : "Could not load stats — is MongoDB running?"}
         </p>
       </div>

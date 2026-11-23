@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { dbConnect } from "@/lib/db/mongoose";
 import { sessionUser } from "@/lib/auth-helpers";
-import { isPlatformAdminEmail } from "@/lib/admin";
 import { User } from "@/lib/db/models/User";
 import { LinkedAccount } from "@/lib/db/models/LinkedAccount";
 import { Product } from "@/lib/db/models/Product";
@@ -25,11 +24,11 @@ function lastNDays(n: number): string[] {
   return out;
 }
 
-/** Platform-wide tracking. Admin emails only (PLATFORM_ADMIN_EMAILS). No message bodies, ever. */
+/** Platform-wide tracking. Platform admins only (isPlatformAdmin on the user doc). No message bodies, ever. */
 export async function GET() {
   const me = await sessionUser();
   if (!me) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
-  if (!isPlatformAdminEmail(me.email)) {
+  if (!me.isPlatformAdmin) {
     return NextResponse.json({ error: "Not a platform admin." }, { status: 403 });
   }
   try {

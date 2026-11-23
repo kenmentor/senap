@@ -88,6 +88,8 @@ check("NEGOTIATE -> objection", stageForAction("NEGOTIATE") === "objection");
 
 // 11. participation: silence is an intentional action
 import { decideParticipation } from "../sessions/social/participation.js";
+import { analyzeModeration } from "../sessions/social/moderation.js";
+import { normalizeMode, effectiveThreshold } from "../sessions/agent-tools/group-agent-store.js";
 const grp = (over: Record<string, unknown> = {}) => ({
   mentionedMe: false,
   quotedMe: false,
@@ -115,6 +117,22 @@ check("delivery complaint -> INTERVENE", decideParticipation(grp(), pctx("my del
 check("incomplete ask -> WAIT", decideParticipation(grp({ nameHit: true }), pctx("Senap, I wanted to ask you something...")).action === "WAIT");
 check("already answered -> OBSERVE", decideParticipation(grp({ humanAnsweredJustBefore: true }), pctx("Does anybody know the delivery fee?", { recent: ["It's ₦2,000"] })).action === "OBSERVE");
 check("football chat -> IGNORE", decideParticipation(grp({ managed: false }), pctx("two customers discussing football results and transfers")).action === "IGNORE");
+
+// 12. SGI moderation: severity pipeline, reporter exempt, never auto-ban
+check("spam link -> L1 observe", analyzeModeration("DM me for forex millions https://t.me/xyz").severity === 1);
+check("repeated spam -> L2 warn", analyzeModeration("DM me for forex millions https://t.me/xyz", { memberRecentViolations: 2 }).severity === 2);
+check("threat -> L4 urgent", analyzeModeration("I will find you and deal with you").severity === 4);
+check("insult -> L3 escalate", analyzeModeration("you are a big fool, shut up").severity === 3);
+check("quoted report exempt", analyzeModeration("reporting what Musa sent, look at this", { quotedText: "you idiot" }).severity === 0);
+check("disagreement not a violation", analyzeModeration("I disagree, Samsung battery lasts longer than iPhone").severity === 0);
+check("joke not a violation", analyzeModeration("haha that meme got me 😂").severity === 0);
+
+// 13. SGI modes: quiet floor holds, legacy untouched
+check("quiet floor 0.65", effectiveThreshold("quiet", 0.3) === 0.65);
+check("active keeps 0.35", effectiveThreshold("active", 0.3) === 0.35);
+check("manager floor 0.25", effectiveThreshold("manager", 0.1) === 0.25);
+check("explicit quieter wins", effectiveThreshold("active", 0.8) === 0.8);
+check("mode defaults quiet", normalizeMode(undefined) === "quiet" && normalizeMode("manager") === "manager");
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);
