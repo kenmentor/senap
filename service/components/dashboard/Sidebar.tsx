@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Home, QrCode, UserRound, Users, Package, Store, Blocks, Settings, PanelLeftClose, PanelLeftOpen, LogOut } from "lucide-react";
+import { Home, QrCode, UserRound, Users, Package, Store, Blocks, Settings, PanelLeftClose, PanelLeftOpen, LogOut, BarChart3 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const items = [
@@ -14,7 +14,8 @@ const items = [
   { href: "/dashboard/products", label: "Products", icon: Package, exact: false },
   { href: "/dashboard/store", label: "Store", icon: Store, exact: false },
   { href: "/dashboard/plugins", label: "Plugins", icon: Blocks, exact: false },
-  { href: "/dashboard/settings", label: "Settings", icon: Settings, exact: false }
+  { href: "/dashboard/settings", label: "Settings", icon: Settings, exact: false },
+  { href: "/dashboard/admin", label: "Platform", icon: BarChart3, exact: false }
 ];
 
 export default function Sidebar() {

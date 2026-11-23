@@ -86,5 +86,35 @@ check("₦28,000 -> 28000", extractBudgetNgn("my budget is ₦28,000") === 28000
 check("CLOSE -> conversion", stageForAction("CLOSE") === "conversion");
 check("NEGOTIATE -> objection", stageForAction("NEGOTIATE") === "objection");
 
+// 11. participation: silence is an intentional action
+import { decideParticipation } from "../sessions/social/participation.js";
+const grp = (over: Record<string, unknown> = {}) => ({
+  mentionedMe: false,
+  quotedMe: false,
+  nameHit: false,
+  isDirectMessage: false,
+  isOwner: false,
+  managed: true,
+  recentOurs: 0,
+  humanAnsweredJustBefore: false,
+  sameSenderBurst: false,
+  ...over,
+});
+const pctx = (text: string, over: Record<string, unknown> = {}) => ({
+  text,
+  recent: [],
+  aim: "COMMERCIAL",
+  rolesOn: ["salesperson", "support"],
+  addressedInHistory: false,
+  ...over,
+});
+check("casual greeting -> OBSERVE", decideParticipation(grp(), pctx("Good morning everyone")).action === "OBSERVE");
+check("explicit ask -> RESPOND", decideParticipation(grp({ nameHit: true }), pctx("Senap, do you have this shoe in size 42?")).action === "RESPOND");
+check("name-only praise -> OBSERVE", decideParticipation(grp({ nameHit: true }), pctx("Senap is actually very useful")).action === "OBSERVE");
+check("delivery complaint -> INTERVENE", decideParticipation(grp(), pctx("my delivery never arrived since Monday")).action === "INTERVENE");
+check("incomplete ask -> WAIT", decideParticipation(grp({ nameHit: true }), pctx("Senap, I wanted to ask you something...")).action === "WAIT");
+check("already answered -> OBSERVE", decideParticipation(grp({ humanAnsweredJustBefore: true }), pctx("Does anybody know the delivery fee?", { recent: ["It's ₦2,000"] })).action === "OBSERVE");
+check("football chat -> IGNORE", decideParticipation(grp({ managed: false }), pctx("two customers discussing football results and transfers")).action === "IGNORE");
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);

@@ -2516,13 +2516,64 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
           });
           const addressed = mentionedMe || quotedMe || nameHit;
           group = { ...group, addressed };
-          // Bands: clearly relevant (>= 0.45 and past the group's threshold)
-          // replies now; background noise (< 0.15) stays silent; the ambiguous
-          // middle goes to the aim-aware intent probe instead of a keyword list.
+          // Participation engine: should Senap speak at all? Silence
+          // (WAIT/OBSERVE/IGNORE) is an intentional action, not a failure.
+          // Deterministic signals decide the clear cases; the aim-aware probe
+          // resolves only the ambiguous middle. Score stays as tiebreak.
           const REPLY_AT = 0.45;
           const SILENT_BELOW = 0.15;
           let decision: "reply" | "silent" = score >= Math.max(REPLY_AT, group.threshold) || isOwner ? "reply" : "silent";
-          if (decision === "silent" && !isOwner && score >= SILENT_BELOW) {
+          let participationReason = "score-band";
+          try {
+            const { decideParticipation, maySpeak, looksAnswered } = await import("./social/participation.js");
+            const { loadRoles } = await import("./agent-tools/store.js");
+            const { normalizeRoles, ROLE_ORDER } = await import("../roles/roles.js");
+            const rawRoles = await loadRoles(this.userId).catch(() => null);
+            const rolesOn = (ROLE_ORDER as string[]).filter((k) => (normalizeRoles(rawRoles) as Record<string, boolean>)[k]);
+            const recentTexts = (this.messageLog.get(remoteJid) ?? [])
+              .slice(-4)
+              .map((e) => (e.text.length > 160 ? `${e.text.slice(0, 160)}…` : e.text));
+            const nonBot = (this.messageLog.get(remoteJid) ?? []).filter((e) => !e.fromMe).slice(-2);
+            const humanAnsweredJustBefore = nonBot.length > 0 && looksAnswered(nonBot.map((e) => e.text));
+            const burstWindow = (this.messageLog.get(remoteJid) ?? []).slice(-2);
+            const sameSenderBurst =
+              burstWindow.length === 2 &&
+              !burstWindow[0].fromMe && !burstWindow[1].fromMe &&
+              burstWindow[1].ts - burstWindow[0].ts < 30_000;
+            const addressedInHistory = recentOurs > 0 || !!quotedParticipant;
+            const part = decideParticipation(
+              {
+                mentionedMe,
+                quotedMe,
+                nameHit,
+                isDirectMessage: false,
+                isOwner,
+                managed: !!group.managed,
+                recentOurs,
+                humanAnsweredJustBefore,
+                sameSenderBurst,
+              },
+              { text: incomingText, recent: recentTexts, aim: group.aim, rolesOn, addressedInHistory },
+            );
+            participationReason = `${part.action.toLowerCase()}(${part.reason})`;
+            if (!maySpeak(part.action)) {
+              // WAIT/OBSERVE/IGNORE stay silent — except the ambiguous middle,
+              // which still gets the aim-aware probe before committing.
+              if (part.reason === "ambiguous-probe" && !isOwner && score >= SILENT_BELOW) {
+                decision = "silent";
+              } else {
+                decision = isOwner ? "reply" : "silent";
+              }
+            } else {
+              // Anti-flood stands even for RESPOND: never stack 3+ own messages
+              // unless the owner or an explicit address demands it.
+              decision = recentOurs >= 2 && !isOwner && !addressed ? "silent" : "reply";
+            }
+            reasons.push(participationReason);
+          } catch {
+            /* participation unreadable — score bands still apply */
+          }
+          if (decision === "silent" && !isOwner && score >= SILENT_BELOW && participationReason.includes("ambiguous-probe")) {
             const recent = (this.messageLog.get(remoteJid) ?? [])
               .slice(-4, -1)
               .map((e) => (e.text.length > 160 ? `${e.text.slice(0, 160)}…` : e.text));

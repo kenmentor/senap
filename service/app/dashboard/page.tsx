@@ -110,8 +110,9 @@ function Block({ children }: { children: React.ReactNode }) {
 
 /** Download-the-app nudge — dashboard only (sellers, never buyers).
  *  Shows on every visit until installed (the X hides it for that visit
- *  only). Shows only when installing is actually possible (real install
- *  prompt, or iOS with manual instructions). */
+ *  only). On mobile it ALWAYS shows — with a one-tap installer when the
+ *  browser fires `beforeinstallprompt`, otherwise with Add-to-Home-Screen
+ *  instructions on tap. Desktop stays event-gated (no nagging). */
 function InstallApp() {
   const [ready, setReady] = useState(false);
   const [deferred, setDeferred] = useState<Event | null>(null);
@@ -137,13 +138,15 @@ function InstallApp() {
     } catch {
       return;
     }
-    const ios = /iphone|ipad|ipod/i.test(window.navigator.userAgent);
+    const ua = window.navigator.userAgent || "";
+    const ios = /iphone|ipad|ipod/i.test(ua);
+    // Any phone/tablet: coarse pointer, small screen, or mobile UA.
+    const mobile =
+      ios ||
+      /android|mobile|tablet/i.test(ua) ||
+      (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) ||
+      Math.min(window.innerWidth, window.innerHeight) < 620;
     setIsIos(ios);
-    if (ios) {
-      // No install event on iOS — manual Share instructions, every visit until installed.
-      setReady(true);
-      return;
-    }
     const onPrompt = (e: Event) => {
       e.preventDefault();
       setDeferred(e);
@@ -159,6 +162,11 @@ function InstallApp() {
     };
     window.addEventListener("beforeinstallprompt", onPrompt);
     window.addEventListener("appinstalled", markInstalled);
+    if (mobile) {
+      // Always prompt on mobile — one-tap when the browser allows it,
+      // manual Add-to-Home-Screen steps on tap otherwise.
+      setReady(true);
+    }
     return () => {
       window.removeEventListener("beforeinstallprompt", onPrompt);
       window.removeEventListener("appinstalled", markInstalled);
