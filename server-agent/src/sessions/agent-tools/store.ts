@@ -170,6 +170,27 @@ const SettingsView =
     ),
   );
 
+const lineLabelCache = new Map<string, { at: number; label: string | null }>();
+
+/** Display label of a WhatsApp line (the name given on the Link page, e.g.
+ *  "Wifi Number (New)"). Members @-mention the LINE by this label, so the
+ *  group gate matches it as addressing the bot. Cached 60s. */
+export async function lineLabelForLine(lineId: string): Promise<string | null> {
+  const id = (lineId ?? "").trim();
+  if (!id) return null;
+  const hit = lineLabelCache.get(id);
+  if (hit && Date.now() - hit.at < CONFIG_TTL_MS) return hit.label;
+  await ensureConn();
+  const doc = (await AccountView.findOne({ engineId: id })
+    .select("name")
+    .lean()
+    .catch(() => null)) as { name?: unknown } | null;
+  const label = typeof doc?.name === "string" && doc.name.trim() ? doc.name.trim() : null;
+  if (lineLabelCache.size > 500) lineLabelCache.clear();
+  lineLabelCache.set(id, { at: Date.now(), label });
+  return label;
+}
+
 /** WhatsApp line → dashboard owner mapping (linkedaccounts collection). */
 export const AccountView =
   mongoose.models.ToolAccount ??

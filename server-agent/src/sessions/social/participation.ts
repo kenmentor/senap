@@ -86,9 +86,11 @@ function intentOf(text: string): string {
   const t = text.toLowerCase();
   if (/(scam|fraud|refund|police|human|manager|owner)/.test(t)) return "escalation";
   if (isTrouble(text)) return "complaint";
-  if (/(price|cost|how much|stock|available|do you have|size)/.test(t)) return "product_enquiry";
+  // Buying signals count as product enquiries even without price/stock words —
+  // "I need a laptop" must reach the probe, never die as smalltalk.
+  if (/(price|cost|how much|stock|available|do you have|do you sell|anyone (selling|have)|i (need|want)|looking for)/.test(t)) return "product_enquiry";
   if (/\?\s*$/.test(text.trim())) return "question";
-  if (/^(good (morning|afternoon|evening)|hello|hi|hey|morning)\b/.test(t)) return "greeting";
+  if (/^(good (morning|afternoon|evening)|hello|hi|hey|morning|how far)\b/.test(t)) return "greeting";
   if (text.trim().length <= 30) return "smalltalk";
   return "discussion";
 }
@@ -168,9 +170,15 @@ export function decideParticipation(
     return { ...base, action: "OBSERVE", confidence: 0.5, relevance: 0.55, reason: "ambiguous-probe" };
   }
 
-  // Greetings / smalltalk / background chatter between members: observe or ignore.
+  // Greetings / smalltalk / background chatter between members: observe.
   if (intent === "greeting" || intent === "smalltalk") {
     return { ...base, action: "OBSERVE", confidence: 0.75, relevance: 0.15, reason: "casual-chatter" };
+  }
+  // Open discussion in a managed group stays probe-eligible (score safety net
+  // may still consult the probe) — hard IGNORE would bury unaddressed but
+  // relevant messages. Unmanaged chatter is ignored confidently.
+  if (signals.managed) {
+    return { ...base, action: "OBSERVE", confidence: 0.55, relevance: 0.3, reason: "group-discussion" };
   }
   return { ...base, action: "IGNORE", confidence: 0.7, relevance: 0.1, reason: "unrelated" };
 }

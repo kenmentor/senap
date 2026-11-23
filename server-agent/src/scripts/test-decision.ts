@@ -117,6 +117,28 @@ check("delivery complaint -> INTERVENE", decideParticipation(grp(), pctx("my del
 check("incomplete ask -> WAIT", decideParticipation(grp({ nameHit: true }), pctx("Senap, I wanted to ask you something...")).action === "WAIT");
 check("already answered -> OBSERVE", decideParticipation(grp({ humanAnsweredJustBefore: true }), pctx("Does anybody know the delivery fee?", { recent: ["It's ₦2,000"] })).action === "OBSERVE");
 check("football chat -> IGNORE", decideParticipation(grp({ managed: false }), pctx("two customers discussing football results and transfers")).action === "IGNORE");
+check("managed discussion stays probe-eligible", (() => {
+  const d = decideParticipation(grp(), pctx("two customers discussing football results and transfers"));
+  return d.action === "OBSERVE" && d.reason === "group-discussion";
+})());
+check("how far is a greeting", (() => {
+  const d = decideParticipation(grp({ nameHit: true }), pctx("Senap, how far"));
+  return d.action === "RESPOND";
+})());
+
+// 11b. buying signals must reach the probe, never die as smalltalk
+{
+  const d = decideParticipation(grp(), pctx("I need a laptop"));
+  check("unaddressed buying signal -> probe (not confident IGNORE)", d.action === "OBSERVE" && d.reason === "ambiguous-probe");
+}
+{
+  const d = decideParticipation(grp(), pctx("does anyone have HP laptops?"));
+  check("do-you-have -> probe", d.action === "OBSERVE" && d.reason === "ambiguous-probe");
+}
+{
+  const d = decideParticipation(grp(), pctx("Good morning everyone"));
+  check("greeting stays low-relevance OBSERVE", d.action === "OBSERVE" && d.relevance < 0.3);
+}
 
 // 12. SGI moderation: severity pipeline, reporter exempt, never auto-ban
 check("spam link -> L1 observe", analyzeModeration("DM me for forex millions https://t.me/xyz").severity === 1);

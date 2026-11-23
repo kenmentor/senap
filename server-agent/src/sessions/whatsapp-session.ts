@@ -707,16 +707,24 @@ export class WhatsappSession {
       /* proceed unmanaged */
     }
 
-    // Names that address the bot (persona, shop short name) for text matching.
+    // Names that address the bot (persona, shop short name, LINE LABEL for
+    // display-name @-mentions like "@Wifi Number (New)"). Members mention the
+    // line by its Link-page label, often as plain text with no mention tag.
     const names: string[] = [];
     let aimRole = "";
     try {
-      const { loadPersona, loadBusiness } = await import("./agent-tools/store.js");
-      const [persona, business] = await Promise.all([
+      const { loadPersona, loadBusiness, lineLabelForLine } = await import("./agent-tools/store.js");
+      const [persona, business, lineLabel] = await Promise.all([
         loadPersona(this.userId).catch(() => null),
         loadBusiness(this.userId).catch(() => null),
+        lineLabelForLine(this.userId).catch(() => null),
       ]);
-      for (const n of [managed?.name, persona?.name, (business?.name ?? "").split(/\s+/)[0]]) {
+      const labelTokens = (lineLabel ?? "")
+        .toLowerCase()
+        .replace(/[()]/g, " ")
+        .split(/[^a-z0-9]+/)
+        .filter((w) => w.length >= 4);
+      for (const n of [managed?.name, persona?.name, (business?.name ?? "").split(/\s+/)[0], lineLabel ?? "", ...labelTokens]) {
         const t = (n ?? "").trim().toLowerCase();
         if (t.length >= 3 && !names.includes(t)) names.push(t);
       }
@@ -2578,10 +2586,18 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
             );
             participationReason = `${part.action.toLowerCase()}(${part.reason})`;
             if (!maySpeak(part.action)) {
-              // WAIT/OBSERVE/IGNORE stay silent — except the ambiguous middle,
-              // which still gets the aim-aware probe before committing.
-              if (part.reason === "ambiguous-probe" && !isOwner && score >= SILENT_BELOW) {
-                decision = "silent";
+              // WAIT/OBSERVE/IGNORE stay silent — with one safety net: when the
+              // structural score says "clearly reply" but participation is only
+              // weakly silent, the probe still gets the final word instead of
+              // going dark. Confident IGNORE (>=0.7) skips the probe entirely.
+              const scoreSaysReply = score >= Math.max(REPLY_AT, group.threshold);
+              if (part.action === "IGNORE" && part.confidence >= 0.7) {
+                decision = isOwner ? "reply" : "silent";
+              } else if (!isOwner && (scoreSaysReply || part.reason === "ambiguous-probe")) {
+                decision = "silent"; // probe below decides
+                if (scoreSaysReply && part.reason !== "ambiguous-probe") {
+                  participationReason += "+score-probe";
+                }
               } else {
                 decision = isOwner ? "reply" : "silent";
               }
@@ -2631,7 +2647,7 @@ private pushToLog(remoteJid: string, entry: BufferedMessage): void {
               /* moderation is best-effort */
             }
           }
-          if (decision === "silent" && !isOwner && score >= SILENT_BELOW && participationReason.includes("ambiguous-probe")) {
+          if (decision === "silent" && !isOwner && score >= SILENT_BELOW && (participationReason.includes("ambiguous-probe") || participationReason.includes("score-probe"))) {
             const recent = (this.messageLog.get(remoteJid) ?? [])
               .slice(-4, -1)
               .map((e) => (e.text.length > 160 ? `${e.text.slice(0, 160)}…` : e.text));
