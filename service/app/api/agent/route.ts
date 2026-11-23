@@ -61,6 +61,18 @@ export async function PUT(req: Request) {
     ] as const;
     const patch: Record<string, unknown> = {};
     for (const k of allowed) if (b[k] !== undefined) patch[k] = b[k];
+    // Employee duties (P6 role layer): only known boolean keys.
+    if (b.roles && typeof b.roles === "object") {
+      const src = b.roles as Record<string, unknown>;
+      const clean: Record<string, boolean> = {};
+      for (const k of ["salesperson", "support", "moderator", "personal_assistant", "store_manager", "marketing", "admin"] as const) {
+        if (typeof src[k] === "boolean") clean[k] = src[k] as boolean;
+      }
+      if (Object.keys(clean).length > 0) {
+        const existing = await Agent.findOne({ key }).select("roles").lean();
+        patch.roles = { ...((existing?.roles as Record<string, boolean> | undefined) ?? {}), ...clean };
+      }
+    }
     // Access switches: only known boolean keys, so a stray payload can't
     // smuggle anything into the agent doc.
     if (b.control && typeof b.control === "object") {

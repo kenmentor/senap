@@ -583,7 +583,7 @@ export default function DashboardHome() {
                 <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[13px] font-extrabold" style={{ background: "rgba(255,255,255,0.08)", color: "#aebac1" }}>3</span>
                 <span className="min-w-0 flex-1">
                   <span className="block text-[13.5px] font-semibold" style={{ color: "#e9edef" }}>Set up your shop</span>
-                  <span className="block truncate text-[12px]" style={{ color: "#8a949b" }}>Products, banner, agent — after linking</span>
+                  <span className="block truncate text-[12px]" style={{ color: "#8a949b" }}>Products, duties, agent — after linking</span>
                 </span>
               </div>
               <div className="mt-3 grid grid-cols-3 gap-2">

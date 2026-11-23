@@ -15,5 +15,14 @@ export const EMPLOYEE_DEFAULTS = {
   exReply: "Yes — 12 left at ₦155,000 each! How many should I reserve for you?",
   days: ["Mon", "Tue", "Wed", "Thu", "Fri"],
   open: "08:00",
-  close: "21:00"
+  close: "21:00",
+  roles: {
+    salesperson: true,
+    support: true,
+    moderator: true,
+    personal_assistant: true,
+    store_manager: true,
+    marketing: true,
+    admin: true,
+  },
 };

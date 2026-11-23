@@ -21,6 +21,7 @@ import { campaignTools } from "./campaign-tools.js";
 import { webTools } from "./web-tools.js";
 import { memoryTools } from "./memory-tools.js";
 import { promptNoteTools } from "./prompt-note-tools.js";
+import { orderTools } from "./order-tools.js";
 
 export const ALL_TOOLS: ToolDefinition[] = [
   ...timeTools,
@@ -42,6 +43,7 @@ export const ALL_TOOLS: ToolDefinition[] = [
   ...webTools,
   ...memoryTools,
   ...promptNoteTools,
+  ...orderTools,
 ];
 
 export function toolSchemas(): OpenAI.Chat.Completions.ChatCompletionTool[] {

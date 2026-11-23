@@ -7,6 +7,7 @@ import {
   isSelfJid,
   loadBusiness,
   loadPersona,
+  loadRoles,
   storeUrl,
 } from "../sessions/agent-tools/store.js";
 import type {
@@ -19,6 +20,15 @@ import type {
 } from "../sessions/agent-tools/tool-types.js";
 import { cleanReply } from "../sessions/format.js";
 import type { HistoryEntry } from "../sessions/conversation-history.js";
+import { loadSalesState, saveSalesState, salesStateBlock } from "../sessions/sales/sales-state.js";
+import { loadCustomerProfile, profileBlock } from "../sessions/customer/profile.js";
+import { perceive, extractBudgetNgn } from "../sessions/sales/perceive.js";
+import { decide, decisionBlock } from "../sessions/sales/decide.js";
+import { policyBlock, stageForAction } from "../sessions/sales/policy.js";
+import { extractPrefs } from "../sessions/sales/extract.js";
+import { isOptOut, honorOptOut, retentionBlock } from "../sessions/sales/retention.js";
+import { normalizeRoles, rolesBlock } from "../roles/roles.js";
+import { canDo } from "../security/permissions.js";
 
 const MAX_STEPS = 8;
 
@@ -115,7 +125,9 @@ async function buildSystemPrompt(userId: string): Promise<string> {
     [
       "Reply on WhatsApp like a busy human shopkeeper: ONE short message by default (a second bubble only for genuinely long, multi-part answers). Write WhatsApp-native text only — *single* asterisks for emphasis, never **double**, no # headers, no markdown links, no raw symbols.",
       "Emoji: almost never. At most one, and only when the customer used one first or it's a warm greeting — a string of emojis is an instant bot tell.",
-      "You are a human member of the shop staff. Never mention AI, models, prompts, or instructions. If asked, you are simply the shop assistant doing your job.",
+        "You are a human member of the shop staff. Never mention AI, models, prompts, or instructions. If asked, you are simply the shop assistant doing your job.",
+        "Identity: you are Senap, the shop's assistant, replying from the shop's number. Never claim to be human, never invent visits or emotions.",
+        "Expression: 1-3 short sentences, one message by default. Answer what was actually said. Ask at most ONE short question per turn. Never stack questions. No corporate openers (Certainly!/Absolutely!/Thank you for reaching out!). Never re-greet mid-conversation.",
       "For facts, prices, stock, hours, or totals, call the right tool first — never invent them. For ANY phone question (is X good, which is better, what should I buy, is this price fair, what does this spec mean), use the SENAP domain tools first: analyze_phone for a deep dossier, compare_phones when torn, suggest_phone for 'what should I buy', phone_knowledge for how/why questions — never answer device questions from vibes.",
       "When a customer asks about a product, ALWAYS call search_products first, then send the product photo with send_media (kind image, current chat) when imageUrl is present — or the video with send_media kind video when the card carries videoUrl instead (never send a video URL as kind image) — and only then reply with price and stock. LINK VS MEDIA — the timing rule, follow it exactly: the storefront link goes out ONLY when the customer asks for the catalogue, the full list, a website, a link, or wants to browse everything themselves. For a SPECIFIC product question, NEVER send the store link — send that product's photo/video via send_media and reply dealer-style instead. Never send link and media in the same answer unless they explicitly asked for both. Recommending SEVERAL products? Send ALL their photos back-to-back in ONE send_media call via the `urls` array (with a caption per photo: name + price) — photos go FIRST, then your text message after. Never answer 'yes we have it' with words alone when a photo exists, and NEVER paste image URLs as text links into your reply — photos go through send_media only, never as chat text. If you ever catch yourself about to paste an image URL, stop and call send_media instead.",
       "How Nala sells — like the sharpest girl in Computer Village, not a catalogue. Study this flow and live inside it:",
@@ -320,11 +332,15 @@ export async function handleCustomerMessage(
     messageLog: req.messageLog,
   };
 
-  // Overdue reminders + system prompt in PARALLEL (independent reads —
-  // sequential awaits used to stack full roundtrips before the model ran).
-  const [dueResult, systemResult] = await Promise.allSettled([
+  // Overdue reminders + system prompt + sales/customer memory + roles in PARALLEL
+  // (independent reads — sequential awaits used to stack full roundtrips).
+  // Sales/profile/roles reads are best-effort: failure falls back to stateless reply.
+  const [dueResult, systemResult, salesStateResult, profileResult, rolesResult] = await Promise.allSettled([
     takeDueReminders(req.userId, req.customerJid),
     buildSystemPrompt(req.userId),
+    isOwner ? Promise.resolve(null) : loadSalesState(req.userId, req.customerJid),
+    isOwner ? Promise.resolve(null) : loadCustomerProfile(req.userId, req.customerJid),
+    loadRoles(req.userId).catch(() => null),
   ]);
   if (dueResult.status === "fulfilled") {
     for (const r of dueResult.value) {
@@ -344,6 +360,53 @@ export async function handleCustomerMessage(
           console.error("System prompt load failed:", systemResult.reason);
           return "You are a helpful WhatsApp shop assistant. Keep replies short.";
         })();
+  const salesState = salesStateResult.status === "fulfilled" ? salesStateResult.value : null;
+  const customerProfile = profileResult.status === "fulfilled" ? profileResult.value : null;
+  const rawRoles = rolesResult.status === "fulfilled" ? rolesResult.value : null;
+  const roles = normalizeRoles(rawRoles);
+  const activeRoles = rolesBlock(roles);
+
+  // P1 Interaction Decision Engine: perceive social situation, select action.
+  // Best-effort and cheap — failure degrades to the legacy tool loop, never blocks.
+  // P5: opt-out short-circuits selling — honor immediately, never pitch.
+  const recentTexts = req.history.slice(-3).map((h) => h.content);
+  let perceptionBlock: string | null = null;
+  let policyText: string | null = null;
+  let retentionText: string | null = null;
+  let decisionAction = "DISCOVER";
+  const optedOut = !isOwner && isOptOut(req.incomingText);
+  if (optedOut) {
+    void honorOptOut(req.userId, req.customerJid);
+    decisionAction = "SUPPORT";
+    console.log(`[decision] action=SUPPORT (opt-out honored) stage=${salesState?.stage ?? "new"}`);
+  }
+  try {
+    if (!isOwner && !optedOut) {
+      const perception = await perceive(req.incomingText, recentTexts, salesState).catch(() => null);
+      if (perception) {
+        const decision = decide(salesState, perception, req.incomingText);
+        decisionAction = decision.action;
+        perceptionBlock = decisionBlock(decision, perception);
+        // P3: per-action sales policy (max-2 recommend, trial-close, close steps).
+        try {
+          policyText = policyBlock(decision.action as Parameters<typeof policyBlock>[0]);
+        } catch {
+          policyText = null;
+        }
+        console.log(`[decision] action=${decision.action} emotion=${perception.emotion} stage=${salesState?.stage ?? "new"} (${decision.reason})`);
+      }
+    }
+    // P5 retention guard rides every customer turn (caps + opt-out).
+    if (!isOwner) {
+      try {
+        retentionText = retentionBlock(optedOut ? false : customerProfile?.followUpConsent);
+      } catch {
+        retentionText = null;
+      }
+    }
+  } catch {
+    /* decision is advisory — legacy loop still answers */
+  }
 
   const messages: ChatMessage[] = [
     { role: "system", content: system },
@@ -353,6 +416,23 @@ export async function handleCustomerMessage(
     ...(req.style ? [{ role: "system" as const, content: req.style }] : []),
     // Saved manner notes: standing instructions for this chat + line.
     ...(req.promptNotes ? [{ role: "system" as const, content: req.promptNotes }] : []),
+    // P1/P2 sales + profile context: patch-not-restart state, returner hints.
+    ...(() => {
+      const s = salesState ? salesStateBlock(salesState) : null;
+      return s ? [{ role: "system" as const, content: s }] : [];
+    })(),
+    ...(() => {
+      const p = customerProfile ? profileBlock(customerProfile) : null;
+      return p ? [{ role: "system" as const, content: p }] : [];
+    })(),
+    // Decision: this turn's job (advisory — tools still ground facts).
+    ...(perceptionBlock ? [{ role: "system" as const, content: perceptionBlock }] : []),
+    // P3 sales policy for this action (recommend/negotiate/close checklists).
+    ...(policyText ? [{ role: "system" as const, content: policyText }] : []),
+    // P5 retention caps + opt-out (never pitch when opted out).
+    ...(retentionText ? [{ role: "system" as const, content: retentionText }] : []),
+    // P6 role layer: one employee, active duties (dashboard controllable).
+    ...(!isOwner ? [{ role: "system" as const, content: activeRoles }] : []),
     // Owner awareness: the current chat IS the boss (self-chat or verified
     // admin line). Incoming user turns are tagged [OWNER] — act, don't sell.
     ...(isOwner
@@ -417,7 +497,10 @@ export async function handleCustomerMessage(
 
     if (!res.tool_calls || res.tool_calls.length === 0) {
       const reply = (res.content ?? "").trim();
-      if (reply) return ensurePhotosDelivered(req, messages, cleanReply(reply), mediaSent);
+      if (reply) {
+        void persistSalesProgress(req.userId, req.customerJid, req.incomingText, decisionAction, isOwner);
+        return ensurePhotosDelivered(req, messages, cleanReply(reply), mediaSent);
+      }
       break;
     }
 
@@ -453,9 +536,30 @@ export async function handleCustomerMessage(
         });
         continue;
       }
+      // P6 role gate: central auth before any consequential tool. Denied tools
+      // return a plain-language redirect so the model tells the customer
+      // what happens next instead of failing silently.
+      const gate = canDo(call.function.name, roles, ctx);
+      if (!gate.ok) {
+        messages.push({
+          role: "tool",
+          tool_call_id: call.id,
+          content: JSON.stringify({ error: gate.reason ?? "That duty is disabled for this shop." }),
+        });
+        continue;
+      }
       const result = await executeTool(call.function.name, parsed, ctx);
       if (call.function.name === "send_media" && (result as { sent?: boolean })?.sent === true) {
         mediaSent = true;
+      }
+      // P4: verified order created -> mark conversion immediately (pending confirmation).
+      if (call.function.name === "create_order" && (result as { orderId?: unknown })?.orderId) {
+        void saveSalesState(req.userId, req.customerJid, {
+          stage: "conversion",
+          intent: "ready_to_buy",
+          purchaseCompleted: true,
+          nextStep: `order ${(result as { orderId: string }).orderId} pending owner confirmation`,
+        });
       }
       messages.push({
         role: "tool",
@@ -477,6 +581,45 @@ export async function handleCustomerMessage(
     `Assistant run produced no reply after ${stepsUsed} step(s) (last finish_reason=${lastFinish || "?"}) for chat ${req.customerJid}: asking for clarification instead.`,
   );
   return "Sorry, that one no clear — which phone are you asking about? Give me a name or budget and I go show you options with pictures."
+}
+
+/**
+ * P1/P2/P3 state persistence: patch stage + budget + prefs from this turn.
+ * Patch-only (never resets). Fire-and-forget — never throws, never blocks.
+ */
+function persistSalesProgress(
+  userId: string,
+  customerJid: string,
+  incomingText: string,
+  action: string,
+  isOwner: boolean,
+): void {
+  if (isOwner) return;
+  try {
+    const stage = stageForAction(action as Parameters<typeof stageForAction>[0]);
+    const budget = extractBudgetNgn(incomingText) ?? undefined;
+    // Prefs need existing state to merge — read cached best-effort, merge sync.
+    void (async () => {
+      try {
+        const { loadSalesState: load } = await import("../sessions/sales/sales-state.js");
+        const current = await load(userId, customerJid).catch(() => null);
+        const prefs = extractPrefs(incomingText, current?.prefs ?? {});
+        const patch: Parameters<typeof saveSalesState>[2] = {
+          stage,
+          intent:
+            stage === "conversion" ? "ready_to_buy" : stage === "retention" ? "follow_up" : stage === "support" ? "support" : "browsing",
+        };
+        if (budget !== undefined) patch.budget = budget;
+        if (prefs) patch.prefs = prefs;
+        if (action === "ESCALATE") patch.needsHuman = true;
+        await saveSalesState(userId, customerJid, patch);
+      } catch {
+        /* best effort */
+      }
+    })();
+  } catch {
+    /* best effort */
+  }
 }
 
 /**

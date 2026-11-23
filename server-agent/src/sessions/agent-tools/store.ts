@@ -65,6 +65,7 @@ interface AgentRow {
   open: string;
   close: string;
   control?: AgentControl;
+  roles?: Record<string, unknown>;
 }
 
 /** Per-line agent access switches (dashboard Home → Agent access). */
@@ -124,6 +125,7 @@ const AgentView =
         open: String,
         close: String,
         control: { type: Schema.Types.Mixed, default: undefined },
+        roles: { type: Schema.Types.Mixed, default: undefined },
       },
       { collection: "agents" },
     ),
@@ -543,6 +545,39 @@ async function loadPersonaFresh(userId?: string): Promise<AssistantPersona | nul
     close: doc.close,
     control: normalizeControl((doc as { control?: unknown }).control),
   };
+}
+
+const rolesCache = new Map<string, { at: number; value: Record<string, boolean> | null }>();
+
+/** Active duties for this line (dashboard Agent → Duties). Fail-open: null = all on. */
+export async function loadRoles(userId?: string): Promise<Record<string, boolean> | null> {
+  const key = userId?.trim() ?? "";
+  const hit = rolesCache.get(key);
+  if (hit && Date.now() - hit.at < CONFIG_TTL_MS) return hit.value;
+  const value = await loadRolesFresh(userId);
+  if (rolesCache.size > 500) rolesCache.clear();
+  rolesCache.set(key, { at: Date.now(), value });
+  return value;
+}
+
+async function loadRolesFresh(userId?: string): Promise<Record<string, boolean> | null> {
+  await ensureConn();
+  let doc = null;
+  if (userId?.trim()) {
+    doc = await AgentView.findOne({ key: userId.trim() }).select("roles").lean();
+    if (!doc) {
+      const owner = await ownerIdForLine(userId.trim()).catch(() => null);
+      if (owner) doc = await AgentView.findOne({ key: `default:${owner}` }).select("roles").lean();
+    }
+  }
+  if (!doc) {
+    const shared = await AgentView.findOne({ key: "default" }).select("roles").lean();
+    if (shared && !(shared as { ownerId?: unknown }).ownerId) doc = shared;
+  }
+  if (!doc) return null;
+  const roles = (doc as { roles?: unknown }).roles;
+  if (!roles || typeof roles !== "object") return null;
+  return roles as Record<string, boolean>;
 }
 
 export async function loadBusiness(scope?: string): Promise<BusinessInfo | null> {

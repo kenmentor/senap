@@ -80,6 +80,36 @@ const PERSONALITIES: { id: string; label: string; desc: string; icon: LucideIcon
   { id: "concise", label: "Concise", desc: "Short replies, facts only.", icon: Zap },
 ];
 
+type Duties = {
+  salesperson: boolean;
+  support: boolean;
+  moderator: boolean;
+  personal_assistant: boolean;
+  store_manager: boolean;
+  marketing: boolean;
+  admin: boolean;
+};
+
+const DUTIES_DEFAULT: Duties = {
+  salesperson: true,
+  support: true,
+  moderator: true,
+  personal_assistant: true,
+  store_manager: true,
+  marketing: true,
+  admin: true,
+};
+
+const DUTY_META: { id: keyof Duties; label: string; desc: string }[] = [
+  { id: "salesperson", label: "Salesperson", desc: "Finds customers, recommends, closes orders" },
+  { id: "support", label: "Support", desc: "Complaints and enquiries" },
+  { id: "moderator", label: "Moderator", desc: "Manages groups, rules" },
+  { id: "personal_assistant", label: "Assistant", desc: "Reminders, schedules" },
+  { id: "store_manager", label: "Store manager", desc: "Inventory, catalog" },
+  { id: "marketing", label: "Marketing", desc: "Campaigns (owner approves sends)" },
+  { id: "admin", label: "Admin", desc: "Reports, recaps" },
+];
+
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 const card = {
@@ -122,6 +152,7 @@ export default function AgentPage() {
   const [days, setDays] = useState<string[]>(["Mon", "Tue", "Wed", "Thu", "Fri"]);
   const [open, setOpen] = useState("08:00");
   const [close, setClose] = useState("21:00");
+  const [duties, setDuties] = useState<Duties>(DUTIES_DEFAULT);
   const [toast, setToast] = useState<string | null>(null);
   const [photoFailed, setPhotoFailed] = useState<Record<string, boolean>>({});
   const [activeBox, setActiveBox] = useState<"acts" | "never">("acts");
@@ -190,6 +221,7 @@ export default function AgentPage() {
     empId?: string; activeEmp?: string; name?: string; role?: string; avatar?: string; photo?: string;
     avatarColor?: string; avatarInk?: string; personality?: string; greeting?: string; acts?: string;
     neverDo?: string; exCustomer?: string; exReply?: string; days?: string[]; open?: string; close?: string;
+    roles?: Partial<Duties>;
   }) => {
     // Coerce: server/DB can hand back nulls for any of these — one null must
     // never poison state and crash the page later.
@@ -247,6 +279,16 @@ export default function AgentPage() {
     if (Array.isArray(c.days) && c.days.length) setDays(c.days.filter((d) => typeof d === "string"));
     if (str(c.open)) setOpen(c.open as string);
     if (str(c.close)) setClose(c.close as string);
+    if (c.roles && typeof c.roles === "object") {
+      setDuties((v) => {
+        const next = { ...v };
+        for (const m of DUTY_META) {
+          const val = (c.roles as Partial<Duties>)[m.id];
+          if (typeof val === "boolean") next[m.id] = val;
+        }
+        return next;
+      });
+    }
   };
 
   useEffect(() => {
@@ -424,7 +466,7 @@ export default function AgentPage() {
       const res = await fetch("/api/agent", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: agentAccount || "default", empId, activeEmp: activeId, name, role, avatar, photo, avatarColor, avatarInk, personality, greeting, acts, neverDo, exCustomer, exReply, days, open, close })
+        body: JSON.stringify({ userId: agentAccount || "default", empId, activeEmp: activeId, name, role, avatar, photo, avatarColor, avatarInk, personality, greeting, acts, neverDo, exCustomer, exReply, days, open, close, roles: duties })
       });
       if (!res.ok) throw new Error("save failed");
       flash(`${name || "Agent"} updated${agentAccount ? ` — live on ${agentAccount}` : " — live on WhatsApp"}.`);
@@ -435,6 +477,20 @@ export default function AgentPage() {
 
   const flipDay = (d: string) =>
     setDays((v) => (v.includes(d) ? v.filter((x) => x !== d) : [...v, d]));
+
+  const flipDuty = (id: keyof Duties) => {
+    const next = { ...duties, [id]: !duties[id] };
+    setDuties(next);
+    // Instant persist — duties are live switches, not draft fields.
+    fetch("/api/agent", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: agentAccount || "default", roles: { [id]: next[id] } }),
+    }).then((res) => {
+      if (res.ok) flash(`${DUTY_META.find((m) => m.id === id)?.label} ${next[id] ? "on" : "off"}.`);
+      else flash("Couldn't save duty — retry.");
+    }).catch(() => flash("Couldn't save duty — is MongoDB running?"));
+  };
 
   const AvatarIcon = (AVATARS.find((a) => a.id === avatar) ?? AVATARS[0]).icon;
   const initials = name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase() || "AG";
@@ -908,6 +964,42 @@ export default function AgentPage() {
           <p className="mt-3.5 rounded-xl p-3 text-[12.5px]" style={{ background: "rgba(0,168,132,0.07)", color: "#aebac1", border: "1px solid rgba(0,168,132,0.22)" }}>
             {summary}{days.length > 0 && ` · ${open} – ${close}`}
           </p>
+        </section>
+
+        {/* Duties — P6 role layer: one employee, switchable responsibilities */}
+        <section className="rounded-2xl p-5 sm:p-6" style={card}>
+          <h2 className="flex items-center gap-2 text-[15px] font-semibold" style={{ color: "#e9edef" }}>
+            <Briefcase size={16} style={{ color: "#00a884" }} /> Duties — what she handles
+          </h2>
+          <p className="mt-1.5 text-[12.5px] leading-relaxed" style={{ color: "#8a949b" }}>
+            One employee, switchable duties. Turn off anything you want to handle yourself — she will redirect to you instead.
+          </p>
+          <div className="mt-3.5 flex flex-col divide-y divide-white/10" style={{ background: "rgba(0,0,0,0.18)", borderRadius: 12 }}>
+            {DUTY_META.map((d) => {
+              const on = duties[d.id];
+              return (
+                <div key={d.id} className="flex items-center gap-3 px-4 py-3.5">
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[13.5px] font-semibold" style={{ color: "#e9edef" }}>{d.label}</span>
+                    <span className="block truncate text-[12px]" style={{ color: "#8a949b" }}>{d.desc}</span>
+                  </span>
+                  <button
+                    onClick={() => flipDuty(d.id)}
+                    role="switch"
+                    aria-checked={on}
+                    aria-label={`Toggle ${d.label}`}
+                    className="relative h-7 w-12 shrink-0 rounded-full transition"
+                    style={{ background: on ? "#00a884" : "rgba(255,255,255,0.12)" }}
+                  >
+                    <span
+                      className="absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-all"
+                      style={{ left: on ? 26 : 4 }}
+                    />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
         </section>
 
         {/* Chat access */}

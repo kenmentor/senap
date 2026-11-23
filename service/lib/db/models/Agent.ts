@@ -21,6 +21,16 @@ export interface AgentDoc extends Document {
   days: string[];
   open: string;
   close: string;
+  /** Employee duties (P6 role layer). Missing = all on (fail-open). */
+  roles?: {
+    salesperson?: boolean;
+    support?: boolean;
+    moderator?: boolean;
+    personal_assistant?: boolean;
+    store_manager?: boolean;
+    marketing?: boolean;
+    admin?: boolean;
+  };
   /** Agent access switches (Home → Agent access). Missing = all on. */
   control?: {
     paused?: boolean;
@@ -53,6 +63,18 @@ const AgentSchema = new Schema<AgentDoc>(
     days: { type: [String], default: ["Mon", "Tue", "Wed", "Thu", "Fri"] },
     open: { type: String, default: "08:00" },
     close: { type: String, default: "21:00" },
+    roles: {
+      type: {
+        salesperson: Boolean,
+        support: Boolean,
+        moderator: Boolean,
+        personal_assistant: Boolean,
+        store_manager: Boolean,
+        marketing: Boolean,
+        admin: Boolean,
+      },
+      default: undefined,
+    },
     control: {
       type: {
         paused: Boolean,
